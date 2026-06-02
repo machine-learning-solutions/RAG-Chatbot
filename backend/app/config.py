@@ -2,6 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator
 
 
 class Settings(BaseSettings):
@@ -22,6 +23,25 @@ class Settings(BaseSettings):
     hybrid_search_enabled: bool = True
     top_k: int = 8
     retrieval_min_k: int = 8
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def _normalize_database_url(cls, v: str) -> str:
+        """
+        Render commonly injects DATABASE_URL as postgres://... (sync driver).
+        SQLAlchemy async engine expects postgresql+asyncpg://...
+        """
+        if not isinstance(v, str):
+            return v
+
+        raw = v.strip()
+        if raw.startswith("postgresql+asyncpg://"):
+            return raw
+        if raw.startswith("postgres://"):
+            return "postgresql+asyncpg://" + raw.removeprefix("postgres://")
+        if raw.startswith("postgresql://"):
+            return "postgresql+asyncpg://" + raw.removeprefix("postgresql://")
+        return raw
 
 
 @lru_cache
