@@ -7,6 +7,7 @@ __all__ = [
     "resolve_language",
     "sanitize_arabic_answer",
     "needs_arabic_polish",
+    "normalize_phone_numbers",
 ]
 
 ARABIC_RE = re.compile(
@@ -16,7 +17,7 @@ LATIN_WORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9.\-/&]*")
 ALLOWED_LATIN_ACRONYMS = frozenset(
     {"AI", "ML", "EMG", "API", "UI", "UX", "IOT", "IOV", "RAG", "SQL", "PDF"}
 )
-KEEP_CHARS = set(".,،؛؟!-:()«»/\n\t ") | set("0123456789")
+KEEP_CHARS = set(".,،؛؟!-:()«»+/\n\t ") | set("0123456789")
 
 
 def _is_allowed_latin(word: str) -> bool:
@@ -91,6 +92,40 @@ def _normalize_whitespace(text: str) -> str:
     return text.strip()
 
 
+JORDAN_INTL_PHONE_RE = re.compile(
+    r"(?<![+\d])"
+    r"(?:00962|962)"
+    r"[\s\-]?"
+    r"(\d{2})"
+    r"[\s\-]?"
+    r"(\d{3})"
+    r"[\s\-]?"
+    r"(\d{4})"
+    r"(?!\d)"
+)
+
+JORDAN_LOCAL_PHONE_RE = re.compile(
+    r"(?<![+\d])"
+    r"0"
+    r"(\d{2})"
+    r"[\s\-]?"
+    r"(\d{3})"
+    r"[\s\-]?"
+    r"(\d{4})"
+    r"(?!\d)"
+)
+
+
+def normalize_phone_numbers(text: str) -> str:
+    """Ensure Jordan phone numbers use the +962 international prefix."""
+
+    def repl(match: re.Match[str]) -> str:
+        return f"+962 {match.group(1)} {match.group(2)} {match.group(3)}"
+
+    text = JORDAN_LOCAL_PHONE_RE.sub(repl, text)
+    return JORDAN_INTL_PHONE_RE.sub(repl, text)
+
+
 def needs_arabic_polish(text: str) -> bool:
     if re.search(r"\(\s*\)", text):
         return True
@@ -113,4 +148,5 @@ def sanitize_arabic_answer(text: str) -> str:
     cleaned = _normalize_mixed_script_tokens(cleaned)
     cleaned = _remove_stray_latin_words(cleaned)
     cleaned = _remove_empty_parentheses(cleaned)
-    return _normalize_whitespace(cleaned)
+    cleaned = _normalize_whitespace(cleaned)
+    return normalize_phone_numbers(cleaned)

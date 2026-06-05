@@ -9,6 +9,7 @@ from app.models.schemas import SourceChunk
 from app.services.hybrid_search import BM25Retriever, merge_hybrid_results
 from app.services.language import (
     needs_arabic_polish,
+    normalize_phone_numbers,
     resolve_language,
     sanitize_arabic_answer,
 )
@@ -282,4 +283,6 @@ class GenerationService:
                 answer = sanitize_arabic_answer(
                     await self._polish_arabic(answer, question)
                 )
+        elif answer:
+            answer = normalize_phone_numbers(answer)
         return answer
