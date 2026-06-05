@@ -2,7 +2,12 @@ import re
 
 from app.services.hybrid_search import is_arabic_question, resolve_language
 
-__all__ = ["is_arabic_question", "resolve_language", "sanitize_arabic_answer"]
+__all__ = [
+    "is_arabic_question",
+    "resolve_language",
+    "sanitize_arabic_answer",
+    "needs_arabic_polish",
+]
 
 ARABIC_RE = re.compile(
     r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]"
@@ -84,6 +89,21 @@ def _normalize_whitespace(text: str) -> str:
     text = re.sub(r"\s+([،؛.؟!])", r"\1", text)
     text = re.sub(r"،{2,}", "،", text)
     return text.strip()
+
+
+def needs_arabic_polish(text: str) -> bool:
+    if re.search(r"\(\s*\)", text):
+        return True
+    for token in re.split(r"\s+", text):
+        if not token:
+            continue
+        has_arabic = bool(ARABIC_RE.search(token))
+        has_latin = bool(re.search(r"[A-Za-z]", token))
+        if has_arabic and has_latin:
+            return True
+        if has_latin and not _is_allowed_latin(token):
+            return True
+    return False
 
 
 def sanitize_arabic_answer(text: str) -> str:

@@ -13,16 +13,20 @@ class Settings(BaseSettings):
     ollama_model: str = "gemma4:e2b"
     embedding_model: str = "intfloat/multilingual-e5-large"
     llm_temperature: float = 0.0
+    llm_num_predict: int = 512
+    arabic_polish_enabled: bool = False
+    max_context_chunks: int = 3
+    context_chunk_max_chars: int = 400
     vector_store_path: Path = Path("./data/vector_store")
     upload_dir: Path = Path("./data/uploads")
     chunk_size: int = 512
     chunk_overlap: int = 64
     turbovec_bit_width: int = 4
-    reranker_enabled: bool = True
+    reranker_enabled: bool = False
     reranker_model: str = "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
     hybrid_search_enabled: bool = True
-    top_k: int = 8
-    retrieval_min_k: int = 8
+    top_k: int = 5
+    retrieval_min_k: int = 5
 
     @field_validator("database_url", mode="before")
     @classmethod

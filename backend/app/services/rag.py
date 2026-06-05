@@ -7,7 +7,11 @@ from langchain_ollama import ChatOllama
 from app.config import Settings
 from app.models.schemas import SourceChunk
 from app.services.hybrid_search import BM25Retriever, merge_hybrid_results
-from app.services.language import resolve_language, sanitize_arabic_answer
+from app.services.language import (
+    needs_arabic_polish,
+    resolve_language,
+    sanitize_arabic_answer,
+)
 from app.services.reranker import Reranker
 from app.services.vector_store import VectorStoreManager
 
@@ -51,7 +55,6 @@ ARABIC_POLISH_PROMPT = ChatPromptTemplate.from_messages(
         ),
         (
             "human",
-            "**مرجع المعرفة:**\n{context}\n\n"
             "**السؤال:**\n{question}\n\n"
             "**المسودة:**\n{draft}\n\n"
             "**الإجابة المنقّحة:**",
@@ -199,11 +202,14 @@ class RetrievalService:
 class GenerationService:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
+        # Gemma 4 defaults to thinking mode; with num_predict capped it can
+        # exhaust the budget on reasoning and return empty content.
         self.llm = ChatOllama(
             base_url=settings.ollama_base_url,
             model=settings.ollama_model,
             temperature=settings.llm_temperature,
-        )
+            num_predict=settings.llm_num_predict,
+        ).bind(think=False)
 
     def build_context(
         self,
@@ -223,7 +229,11 @@ class GenerationService:
             if page:
                 header += f" (page {page})" if language != "ar" else f" (صفحة {page})"
 
-            parts.append(f"{header}\n{doc.page_content.strip()}")
+            content = doc.page_content.strip()
+            max_chars = self.settings.context_chunk_max_chars
+            if len(content) > max_chars:
+                content = content[:max_chars].rstrip() + "..."
+            parts.append(f"{header}\n{content}")
 
         return "\n\n---\n\n".join(parts)
 
@@ -244,13 +254,9 @@ class GenerationService:
             )
         return sources
 
-    async def _polish_arabic(
-        self, draft: str, question: str, context: str
-    ) -> str:
+    async def _polish_arabic(self, draft: str, question: str) -> str:
         chain = ARABIC_POLISH_PROMPT | self.llm
-        response = await chain.ainvoke(
-            {"draft": draft, "question": question, "context": context}
-        )
+        response = await chain.ainvoke({"draft": draft, "question": question})
         return response.content
 
     async def generate(
@@ -260,7 +266,9 @@ class GenerationService:
         language: str | None = None,
     ) -> str:
         lang = resolve_language(question, language)
-        distinct_chunks = deduplicate_chunks(chunks)[:5]
+        distinct_chunks = deduplicate_chunks(chunks)[
+            : self.settings.max_context_chunks
+        ]
         context = self.build_context(distinct_chunks, language=lang)
         prompt = ARABIC_RAG_PROMPT if lang == "ar" else ENGLISH_RAG_PROMPT
         chain = prompt | self.llm
@@ -268,7 +276,8 @@ class GenerationService:
         answer = deduplicate_answer(response.content)
         if lang == "ar" and answer:
             answer = sanitize_arabic_answer(answer)
-            answer = sanitize_arabic_answer(
-                await self._polish_arabic(answer, question, context)
-            )
+            if self.settings.arabic_polish_enabled or needs_arabic_polish(answer):
+                answer = sanitize_arabic_answer(
+                    await self._polish_arabic(answer, question)
+                )
         return answer

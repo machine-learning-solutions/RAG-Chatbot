@@ -113,8 +113,8 @@ def render_chat() -> None:
                         "question": prompt,
                         "language": st.session_state.language,
                         "document_id": st.session_state.get("document_id"),
-                        "top_k": st.session_state.get("top_k", 8),
-                        "use_reranker": st.session_state.get("use_reranker", True),
+                        "top_k": st.session_state.get("top_k", 5),
+                        "use_reranker": st.session_state.get("use_reranker", False),
                         "use_hybrid": st.session_state.get("use_hybrid", True),
                     }
                     result = api_post("/api/chat", json=payload)
@@ -240,8 +240,8 @@ def render_sidebar() -> str | None:
         st.sidebar.info(t(lang, "no_docs"))
 
     st.sidebar.divider()
-    top_k = st.sidebar.slider(t(lang, "top_k"), 1, 15, 8)
-    use_reranker = st.sidebar.checkbox(t(lang, "reranker"), value=True)
+    top_k = st.sidebar.slider(t(lang, "top_k"), 1, 15, 5)
+    use_reranker = st.sidebar.checkbox(t(lang, "reranker"), value=False)
     use_hybrid = st.sidebar.checkbox(t(lang, "hybrid"), value=True)
 
     st.session_state["top_k"] = top_k
