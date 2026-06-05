@@ -116,6 +116,16 @@ header[data-testid="stHeader"] {
 [data-testid="stMainBlockContainer"] {
     padding-top: 0.25rem !important;
 }
+
+@media (max-width: 767px) {
+    [data-testid="stBottomBlockContainer"] {
+        padding-bottom: 0.5rem !important;
+    }
+
+    [data-testid="stAppViewContainer"] > section.main > div.block-container {
+        padding-bottom: 0.25rem !important;
+    }
+}
 """
 
 
