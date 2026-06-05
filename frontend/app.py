@@ -16,13 +16,24 @@ if "language" not in st.session_state:
 
 lang = st.session_state.language
 
+
+def is_portfolio_mode() -> bool:
+    embed = st.query_params.get("embed", "")
+    portfolio = st.query_params.get("portfolio", "")
+    env_flag = os.getenv("PORTFOLIO_MODE", "").lower() == "true"
+    return embed == "true" or portfolio == "true" or env_flag
+
+
+portfolio_mode = is_portfolio_mode()
+
 st.set_page_config(
-    page_title=t(lang, "page_title"),
-    page_icon="📚",
+    page_title="Portfolio Assistant" if portfolio_mode else t(lang, "page_title"),
+    page_icon="💼" if portfolio_mode else "📚",
     layout="wide",
+    initial_sidebar_state="collapsed" if portfolio_mode else "auto",
 )
 
-st.markdown(page_css(lang), unsafe_allow_html=True)
+st.markdown(page_css(lang, portfolio=portfolio_mode), unsafe_allow_html=True)
 
 
 def api_get(path: str, timeout: float = API_TIMEOUT) -> dict[str, Any]:
@@ -54,13 +65,25 @@ def api_delete(path: str) -> dict[str, Any]:
         return response.json()
 
 
-def render_language_switcher() -> None:
-    col1, col2 = st.sidebar.columns(2)
+def init_portfolio_defaults() -> None:
+    st.session_state.setdefault("top_k", 5)
+    st.session_state.setdefault("use_reranker", False)
+    st.session_state.setdefault("use_hybrid", True)
+    st.session_state.setdefault("document_id", None)
+
+
+def render_language_switcher(*, compact: bool = False) -> None:
+    if compact:
+        col1, col2, _ = st.columns([1, 1, 4])
+    else:
+        col1, col2 = st.sidebar.columns(2)
+
     with col1:
         if st.button(
             t("en", "lang_en"),
             use_container_width=True,
             type="primary" if lang == "en" else "secondary",
+            key="lang_en",
         ):
             st.session_state.language = "en"
             st.rerun()
@@ -69,6 +92,7 @@ def render_language_switcher() -> None:
             t("ar", "lang_ar"),
             use_container_width=True,
             type="primary" if lang == "ar" else "secondary",
+            key="lang_ar",
         ):
             st.session_state.language = "ar"
             st.rerun()
@@ -80,18 +104,30 @@ def render_source_text(text: str, limit: int = 300) -> None:
 
 
 def render_chat() -> None:
-    st.title(t(lang, "title"))
-    st.caption(t(lang, "caption"))
+    if not portfolio_mode:
+        st.title(t(lang, "title"))
+        st.caption(t(lang, "caption"))
+    else:
+        render_language_switcher(compact=True)
 
-    if "messages" not in st.session_state:
+    welcome_key = "portfolio_welcome" if portfolio_mode else "welcome"
+    chat_input_key = "portfolio_chat_input" if portfolio_mode else "chat_input"
+
+    if portfolio_mode:
+        if not st.session_state.get("portfolio_initialized"):
+            st.session_state.messages = [
+                {"role": "assistant", "content": t(lang, welcome_key), "sources": []}
+            ]
+            st.session_state.portfolio_initialized = True
+    elif "messages" not in st.session_state:
         st.session_state.messages = [
-            {"role": "assistant", "content": t(lang, "welcome"), "sources": []}
+            {"role": "assistant", "content": t(lang, welcome_key), "sources": []}
         ]
 
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             render_bidi_text(message["content"])
-            if message.get("sources"):
+            if message.get("sources") and not portfolio_mode:
                 with st.expander(t(lang, "sources")):
                     for src in message["sources"]:
                         page = f" · p.{src['page']}" if src.get("page") else ""
@@ -101,7 +137,7 @@ def render_chat() -> None:
                         )
                         render_source_text(src["text"])
 
-    if prompt := st.chat_input(t(lang, "chat_input")):
+    if prompt := st.chat_input(t(lang, chat_input_key)):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             render_bidi_text(prompt)
@@ -123,7 +159,7 @@ def render_chat() -> None:
 
                     render_bidi_text(answer)
 
-                    if sources:
+                    if sources and not portfolio_mode:
                         with st.expander(f"{t(lang, 'sources')} ({len(sources)})"):
                             for src in sources:
                                 page = f" · p.{src['page']}" if src.get("page") else ""
@@ -252,5 +288,10 @@ def render_sidebar() -> str | None:
     return selected_doc
 
 
+if portfolio_mode:
+    init_portfolio_defaults()
+
 render_chat()
-render_sidebar()
+
+if not portfolio_mode:
+    render_sidebar()

@@ -81,8 +81,39 @@ html, body, [data-testid="stAppViewContainer"] {
 """
 
 
-def page_css(language: str) -> str:
+PORTFOLIO_EMBED_CSS = """
+[data-testid="stSidebar"],
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="collapsedControl"],
+section[data-testid="stSidebar"] {
+    display: none !important;
+}
+
+[data-testid="stAppViewContainer"] > section.main > div.block-container {
+    padding-top: 0.75rem !important;
+    padding-bottom: 0.5rem !important;
+    max-width: 100% !important;
+}
+
+[data-testid="stToolbar"],
+header[data-testid="stHeader"] {
+    display: none !important;
+}
+
+[data-testid="stDecoration"] {
+    display: none !important;
+}
+
+[data-testid="stMainBlockContainer"] {
+    padding-top: 0.25rem !important;
+}
+"""
+
+
+def page_css(language: str, *, portfolio: bool = False) -> str:
     base = BIDI_CSS + (RTL_PAGE_CSS if language == "ar" else LTR_PAGE_CSS)
+    if portfolio:
+        base += PORTFOLIO_EMBED_CSS
     return f"<style>{base}</style>"
 
 
@@ -94,6 +125,7 @@ UI_STRINGS = {
         "sidebar_title": "📚 مساعد RAG",
         "sidebar_caption": "100% Offline — TurboVec + Ollama",
         "chat_input": "اكتب سؤالك بالعربية أو الإنجليزية...",
+        "portfolio_chat_input": "اسأل عن خبرتي، مهاراتي، شهاداتي، أو مشاريعي...",
         "upload": "رفع ملف",
         "upload_types": "PDF · Word · Markdown · TXT · JSON",
         "ingest": "فهرسة المستند",
@@ -108,6 +140,10 @@ UI_STRINGS = {
         "lang_en": "English",
         "lang_ar": "العربية",
         "welcome": "مرحباً! أنا مساعدك الذكي. ارفع مستنداً واسأل عنه.",
+        "portfolio_welcome": (
+            "مرحباً! أنا مساعد محفظة جهاد أبو عواد. "
+            "اسألني عن خبرتي، مهاراتي، شهاداتي، مشاريعي، أو أي معلومات عني."
+        ),
         "searching": "جاري البحث والتوليد...",
         "system_status": "حالة النظام",
     },
@@ -118,6 +154,7 @@ UI_STRINGS = {
         "sidebar_title": "📚 RAG Chatbot",
         "sidebar_caption": "100% Offline — TurboVec + Ollama",
         "chat_input": "Ask a question in Arabic or English...",
+        "portfolio_chat_input": "Ask about my experience, skills, certifications, or projects...",
         "upload": "Upload Documents",
         "upload_types": "PDF · Word · Markdown · TXT · JSON",
         "ingest": "Ingest Document",
@@ -132,6 +169,10 @@ UI_STRINGS = {
         "lang_en": "English",
         "lang_ar": "العربية",
         "welcome": "Hello! Upload a document and ask questions about it.",
+        "portfolio_welcome": (
+            "Hello! I'm Jehad Abu Awwad's portfolio assistant. "
+            "Ask about my experience, skills, certifications, projects, or background."
+        ),
         "searching": "Searching & generating...",
         "system_status": "System status",
     },
