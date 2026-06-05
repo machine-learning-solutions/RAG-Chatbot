@@ -17,7 +17,16 @@ LATIN_WORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9.\-/&]*")
 ALLOWED_LATIN_ACRONYMS = frozenset(
     {"AI", "ML", "EMG", "API", "UI", "UX", "IOT", "IOV", "RAG", "SQL", "PDF"}
 )
-KEEP_CHARS = set(".,،؛؟!-:()«»+/\n\t ") | set("0123456789")
+KEEP_CHARS = set(".,،؛؟!-:()«»+[]/@#\n\t ") | set("0123456789")
+
+URL_RE = re.compile(
+    r"https?://[^\s\)\]،؛\"'<>]+"
+    r"|www\.[^\s\)\]،؛\"'<>]+"
+)
+EMAIL_RE = re.compile(
+    r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
+)
+CONTACT_TOKEN_PATTERNS = (URL_RE, EMAIL_RE)
 
 
 def _is_allowed_latin(word: str) -> bool:
@@ -84,6 +93,26 @@ def _remove_empty_parentheses(text: str) -> str:
         cleaned = updated
 
 
+def _mask_contact_tokens(text: str) -> tuple[str, dict[str, str]]:
+    """Replace URLs and emails with placeholders before Latin-stripping passes."""
+    store: dict[str, str] = {}
+    masked = text
+    for pattern in CONTACT_TOKEN_PATTERNS:
+        def repl(match: re.Match[str], _store: dict[str, str] = store) -> str:
+            token = f"[[{len(_store)}]]"
+            _store[token] = match.group(0)
+            return token
+
+        masked = pattern.sub(repl, masked)
+    return masked, store
+
+
+def _unmask_contact_tokens(text: str, store: dict[str, str]) -> str:
+    for token, value in store.items():
+        text = text.replace(token, value)
+    return text
+
+
 def _normalize_whitespace(text: str) -> str:
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
@@ -143,10 +172,12 @@ def needs_arabic_polish(text: str) -> bool:
 
 def sanitize_arabic_answer(text: str) -> str:
     """Minimal post-processing: script cleanup only, no phrase-specific rules."""
-    cleaned = _strip_disallowed_scripts(text)
+    masked, token_store = _mask_contact_tokens(text)
+    cleaned = _strip_disallowed_scripts(masked)
     cleaned = _strip_latin_parentheticals(cleaned)
     cleaned = _normalize_mixed_script_tokens(cleaned)
     cleaned = _remove_stray_latin_words(cleaned)
     cleaned = _remove_empty_parentheses(cleaned)
     cleaned = _normalize_whitespace(cleaned)
-    return normalize_phone_numbers(cleaned)
+    cleaned = normalize_phone_numbers(cleaned)
+    return _unmask_contact_tokens(cleaned, token_store)
