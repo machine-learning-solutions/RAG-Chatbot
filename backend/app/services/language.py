@@ -47,12 +47,35 @@ def _normalize_mixed_script_tokens(text: str) -> str:
     return "".join(normalized)
 
 
+def _strip_latin_parentheticals(text: str) -> str:
+    """Remove (English text) groups instead of leaving empty parentheses."""
+
+    def replace(match: re.Match[str]) -> str:
+        inner = match.group(1)
+        if ARABIC_RE.search(inner):
+            return match.group(0)
+        if LATIN_WORD_RE.search(inner):
+            return ""
+        return match.group(0)
+
+    return re.sub(r"\(([^)]*)\)", replace, text)
+
+
 def _remove_stray_latin_words(text: str) -> str:
     def replace(match: re.Match[str]) -> str:
         word = match.group(0)
         return word if _is_allowed_latin(word) else ""
 
     return LATIN_WORD_RE.sub(replace, text)
+
+
+def _remove_empty_parentheses(text: str) -> str:
+    cleaned = text
+    while True:
+        updated = re.sub(r"\(\s*\)", "", cleaned)
+        if updated == cleaned:
+            return updated
+        cleaned = updated
 
 
 def _normalize_whitespace(text: str) -> str:
@@ -66,6 +89,8 @@ def _normalize_whitespace(text: str) -> str:
 def sanitize_arabic_answer(text: str) -> str:
     """Minimal post-processing: script cleanup only, no phrase-specific rules."""
     cleaned = _strip_disallowed_scripts(text)
+    cleaned = _strip_latin_parentheticals(cleaned)
     cleaned = _normalize_mixed_script_tokens(cleaned)
     cleaned = _remove_stray_latin_words(cleaned)
+    cleaned = _remove_empty_parentheses(cleaned)
     return _normalize_whitespace(cleaned)
