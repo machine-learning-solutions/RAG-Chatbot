@@ -7,100 +7,65 @@ __all__ = ["is_arabic_question", "resolve_language", "sanitize_arabic_answer"]
 ARABIC_RE = re.compile(
     r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]"
 )
-LATIN_RE = re.compile(r"[A-Za-z]")
-ALLOWED_LATIN_ACRONYMS = {
-    "AI",
-    "ML",
-    "EMG",
-    "API",
-    "UI",
-    "UX",
-    "IoT",
-    "IoV",
-    "RAG",
-    "SQL",
-    "PDF",
-}
-
-# Whole-word / phrase replacements (case-insensitive).
-ENGLISH_TO_ARABIC_PHRASES: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"\bmechatronics\s+engineer\b", re.I), "مهندس ميكاترونيكس"),
-    (re.compile(r"\bmechatronics\b", re.I), "ميكاترونيكس"),
-    (re.compile(r"\belectronics\s+technician\b", re.I), "فني إلكترونيات"),
-    (re.compile(r"\bsoftware\s+developer\b", re.I), "مطور برمجيات"),
-    (re.compile(r"\bfull[\s-]*stack\b", re.I), "متكامل"),
-    (re.compile(r"\bmobile\s+developer\b", re.I), "مطور تطبيقات جوال"),
-    (re.compile(r"\bmachine\s+learning\b", re.I), "تعلم الآلة"),
-    (re.compile(r"\bweb\s+development\b", re.I), "تطوير الويب"),
-    (re.compile(r"\bexperienced\b", re.I), "ذو خبرة"),
-    (re.compile(r"\bengineer\b", re.I), "مهندس"),
-    (re.compile(r"\bdeveloper\b", re.I), "مطور"),
-    (re.compile(r"\btechnician\b", re.I), "فني"),
-    (re.compile(r"\bmaintenance\b", re.I), "صيانة"),
-    (re.compile(r"\bquality\b", re.I), "جودة"),
-    (re.compile(r"\bcode\s+fellows\b", re.I), "معهد كود فيلوز"),
-]
-
-# Broken mixed-script tokens produced by small LLMs.
-MIXED_TOKEN_REPLACEMENTS: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"ميكانtroniks?", re.I), "ميكاترونيكس"),
-    (re.compile(r"ميكانtronك", re.I), "ميكاترونيكس"),
-    (re.compile(r"ميكانtron", re.I), "ميكاترونيكس"),
-    (re.compile(r"ميكانيكs?", re.I), "ميكاترونيكس"),
-    (re.compile(r"engineer", re.I), "مهندس"),
-    (re.compile(r"Experienced", re.I), "ذو خبرة"),
-]
+LATIN_WORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9.\-/&]*")
+ALLOWED_LATIN_ACRONYMS = frozenset(
+    {"AI", "ML", "EMG", "API", "UI", "UX", "IOT", "IOV", "RAG", "SQL", "PDF"}
+)
+KEEP_CHARS = set(".,،؛؟!-:()«»/\n\t ") | set("0123456789")
 
 
-def _is_mixed_script(token: str) -> bool:
-    return bool(ARABIC_RE.search(token) and LATIN_RE.search(token))
+def _is_allowed_latin(word: str) -> bool:
+    return word.strip(".,;:!?()[]«»\"'").upper() in ALLOWED_LATIN_ACRONYMS
 
 
-def _is_allowed_latin_token(token: str) -> bool:
-    cleaned = token.strip(".,;:!?()[]«»\"'")
-    return cleaned.upper() in ALLOWED_LATIN_ACRONYMS
+def _strip_disallowed_scripts(text: str) -> str:
+    """Keep Arabic letters, digits, punctuation, whitespace, and Latin acronyms only."""
+    result: list[str] = []
+    for char in text:
+        if ARABIC_RE.match(char) or char in KEEP_CHARS:
+            result.append(char)
+        elif char.isascii() and char.isalpha():
+            result.append(char)
+    return "".join(result)
 
 
-def _fix_mixed_token(token: str) -> str:
-    for pattern, replacement in MIXED_TOKEN_REPLACEMENTS:
-        if pattern.search(token):
-            return pattern.sub(replacement, token)
-    arabic_chars = "".join(ARABIC_RE.findall(token))
-    if "ميكان" in arabic_chars:
-        return "ميكاترونيكس"
-    return ARABIC_RE.sub("", token) or token
+def _normalize_mixed_script_tokens(text: str) -> str:
+    """Words mixing Arabic and Latin lose their Latin portion; polish pass restores meaning."""
+    tokens = re.split(r"(\s+)", text)
+    normalized: list[str] = []
+    for token in tokens:
+        if not token.strip():
+            normalized.append(token)
+            continue
+        has_arabic = bool(ARABIC_RE.search(token))
+        has_latin = bool(re.search(r"[A-Za-z]", token))
+        if has_arabic and has_latin:
+            arabic_only = "".join(ARABIC_RE.findall(token))
+            normalized.append(arabic_only or token)
+            continue
+        normalized.append(token)
+    return "".join(normalized)
 
 
-def _replace_stray_latin_words(text: str) -> str:
-    def replace_word(match: re.Match[str]) -> str:
+def _remove_stray_latin_words(text: str) -> str:
+    def replace(match: re.Match[str]) -> str:
         word = match.group(0)
-        if _is_allowed_latin_token(word):
-            return word
-        return ""
+        return word if _is_allowed_latin(word) else ""
 
-    return re.sub(r"[A-Za-z][A-Za-z.\-/&]*", replace_word, text)
+    return LATIN_WORD_RE.sub(replace, text)
+
+
+def _normalize_whitespace(text: str) -> str:
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = re.sub(r"\s+([،؛.؟!])", r"\1", text)
+    text = re.sub(r"،{2,}", "،", text)
+    return text.strip()
 
 
 def sanitize_arabic_answer(text: str) -> str:
-    cleaned = text
-    for pattern, replacement in ENGLISH_TO_ARABIC_PHRASES:
-        cleaned = pattern.sub(replacement, cleaned)
-    for pattern, replacement in MIXED_TOKEN_REPLACEMENTS:
-        cleaned = pattern.sub(replacement, cleaned)
-
-    tokens = re.split(r"(\s+)", cleaned)
-    fixed_tokens: list[str] = []
-    for token in tokens:
-        if not token.strip():
-            fixed_tokens.append(token)
-            continue
-        if _is_mixed_script(token):
-            fixed_tokens.append(_fix_mixed_token(token))
-            continue
-        fixed_tokens.append(token)
-
-    cleaned = "".join(fixed_tokens)
-    cleaned = _replace_stray_latin_words(cleaned)
-    cleaned = re.sub(r"\s{2,}", " ", cleaned)
-    cleaned = re.sub(r"\s+([،؛.؟!])", r"\1", cleaned)
-    return cleaned.strip()
+    """Minimal post-processing: script cleanup only, no phrase-specific rules."""
+    cleaned = _strip_disallowed_scripts(text)
+    cleaned = _normalize_mixed_script_tokens(cleaned)
+    cleaned = _remove_stray_latin_words(cleaned)
+    return _normalize_whitespace(cleaned)

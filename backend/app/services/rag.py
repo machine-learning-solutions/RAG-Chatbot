@@ -11,32 +11,48 @@ from app.services.language import resolve_language, sanitize_arabic_answer
 from app.services.reranker import Reranker
 from app.services.vector_store import VectorStoreManager
 
-# Arabic prompt adapted from Chatbot - OLD (rag_pipeline.py) + strict language rules
 ARABIC_RAG_PROMPT = ChatPromptTemplate.from_messages(
     [
         (
             "system",
-            "أنت مساعد ذكي متخصص في الإجابة على الأسئلة بناءً على المعلومات المقدمة "
-            "من قاعدة المعرفة.\n\n"
-            "**تعليمات مهمة:**\n"
-            "1. اقرأ المعلومات المقدمة بعناية واستخدمها للإجابة على السؤال.\n"
-            "2. قدم إجابة موجزة ومتماسكة بالعربية الفصحى (فقرة أو فقرتان كحد أقصى).\n"
-            "3. اكتب بالعربية الفصحى فقط. المصادر قد تكون بالإنجليزية لكن الإجابة "
-            "يجب أن تكون عربية بالكامل.\n"
-            "4. ترجم المصطلحات الأجنبية إلى العربية (مثال: Mechatronics → ميكاترونيكس). "
-            "لا تدمج حروفاً لاتينية داخل كلمات عربية (مثال خاطئ: ميكانtroniks).\n"
-            "5. استخدم الاختصارات اللاتينية فقط عند الضرورة (مثل AI، ML).\n"
-            "6. لا تنسخ أخطاء OCR أو نصوص مشوهة من السياق.\n"
-            "7. استخدم الترقيم العربي: ، ؛ ؟\n"
-            "8. قدّم إجابة واحدة متماسكة فقط. لا تكرر نفس المعلومة بصيغ مختلفة.\n"
-            "9. إذا لم تجد أي معلومات ذات صلة، قل: "
-            "«لا أستطيع العثور على إجابة في المعلومات المتوفرة.»",
+            "أنت مساعد يجيب بالعربية الفصحى بناءً على معلومات قاعدة المعرفة.\n\n"
+            "القواعد:\n"
+            "1. المصادر قد تكون بأي لغة، لكن الإجابة عربية فصحى بالكامل.\n"
+            "2. ترجم كل المصطلحات والأسماء الأجنبية إلى العربية بصياغة طبيعية.\n"
+            "3. لا تدمج حروفاً لاتينية داخل كلمات عربية.\n"
+            "4. لا تنسخ أخطاء OCR ولا تترك أقواساً فارغة.\n"
+            "5. عند السرد استخدم قائمة واضحة (- أو ١. ٢.).\n"
+            "6. إجابة واحدة موجزة دون تكرار.\n"
+            "7. إن لم تجد معلومات: «لا أستطيع العثور على إجابة في المعلومات المتوفرة.»",
         ),
         (
             "human",
             "**المعلومات من قاعدة المعرفة:**\n{context}\n\n"
             "**السؤال:**\n{question}\n\n"
-            "**الإجابة (فقرة واحدة متماسكة، دون تكرار):**",
+            "**الإجابة:**",
+        ),
+    ]
+)
+
+ARABIC_POLISH_PROMPT = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            "أنت محرر لغوي عربي. مهمتك إعادة صياغة مسودة إجابة لتصبح عربية فصحى "
+            "سليمة نحوياً وبلاغياً.\n\n"
+            "القواعد:\n"
+            "1. التزم بحقائق مرجع المعرفة والمسودة؛ لا تضف ولا تحذف معلومات.\n"
+            "2. أزل الكلمات الإنجليزية واستبدلها بمرادف عربي (إلا الاختصارات: AI، ML).\n"
+            "3. أصلح الأسماء والمصطلحات المختلطة أو المشوّهة.\n"
+            "4. حسّن البنية: جمل واضحة، وقوائم منظمة عند الحاجة.\n"
+            "5. أعد النص النهائي فقط دون مقدمات أو تعليقات.",
+        ),
+        (
+            "human",
+            "**مرجع المعرفة:**\n{context}\n\n"
+            "**السؤال:**\n{question}\n\n"
+            "**المسودة:**\n{draft}\n\n"
+            "**الإجابة المنقّحة:**",
         ),
     ]
 )
@@ -226,6 +242,15 @@ class GenerationService:
             )
         return sources
 
+    async def _polish_arabic(
+        self, draft: str, question: str, context: str
+    ) -> str:
+        chain = ARABIC_POLISH_PROMPT | self.llm
+        response = await chain.ainvoke(
+            {"draft": draft, "question": question, "context": context}
+        )
+        return response.content
+
     async def generate(
         self,
         question: str,
@@ -239,6 +264,9 @@ class GenerationService:
         chain = prompt | self.llm
         response = await chain.ainvoke({"context": context, "question": question})
         answer = deduplicate_answer(response.content)
-        if lang == "ar":
+        if lang == "ar" and answer:
             answer = sanitize_arabic_answer(answer)
+            answer = sanitize_arabic_answer(
+                await self._polish_arabic(answer, question, context)
+            )
         return answer
