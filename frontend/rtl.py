@@ -10,10 +10,24 @@ def contains_arabic(text: str) -> bool:
     return bool(ARABIC_RE.search(text))
 
 
+def format_text_breaks(text: str) -> str:
+    """Add line breaks after sentences and bullet points for readability."""
+    lines = text.split("\n")
+    formatted: list[str] = []
+    for index, line in enumerate(lines):
+        if line.lstrip() and not line.lstrip().startswith("-"):
+            line = re.sub(r"\.([ \t]+)(?=\S)", ".\n", line)
+        formatted.append(line)
+        if line.lstrip().startswith("-") and line.rstrip().endswith("."):
+            if index + 1 < len(lines) and lines[index + 1].strip():
+                formatted.append("")
+    return "\n".join(formatted)
+
+
 def render_bidi_text(text: str, *, monospace: bool = False) -> None:
     import streamlit as st
 
-    safe = html.escape(text).replace("\n", "<br>")
+    safe = html.escape(format_text_breaks(text)).replace("\n", "<br>")
     mono = "font-family: monospace; white-space: pre-wrap;" if monospace else ""
     st.markdown(
         f'<div dir="auto" class="bidi-text" style="{mono}">{safe}</div>',
