@@ -15,7 +15,9 @@ services:
     restart: unless-stopped
 
   ollama:
-    image: ollama/ollama:latest
+    # Pin below 0.30: latest CUDA backend breaks on driver 535 (RTX 4060/3050).
+    image: ollama/ollama:0.24.0
+    gpus: all
     volumes:
       - ollama_data:/root/.ollama
     ports:
@@ -29,7 +31,7 @@ services:
     restart: unless-stopped
 
   ollama-init:
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.24.0
     depends_on:
       ollama:
         condition: service_healthy

@@ -1,3 +1,5 @@
+import re
+
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_ollama import ChatOllama
@@ -5,7 +7,7 @@ from langchain_ollama import ChatOllama
 from app.config import Settings
 from app.models.schemas import SourceChunk
 from app.services.hybrid_search import BM25Retriever, merge_hybrid_results
-from app.services.language import resolve_language
+from app.services.language import resolve_language, sanitize_arabic_answer
 from app.services.reranker import Reranker
 from app.services.vector_store import VectorStoreManager
 
@@ -18,20 +20,23 @@ ARABIC_RAG_PROMPT = ChatPromptTemplate.from_messages(
             "من قاعدة المعرفة.\n\n"
             "**تعليمات مهمة:**\n"
             "1. اقرأ المعلومات المقدمة بعناية واستخدمها للإجابة على السؤال.\n"
-            "2. قدم إجابة شاملة ومفصلة بالعربية الفصحى بناءً على المعلومات المتوفرة.\n"
-            "3. ترجم المصطلحات الأجنبية إلى العربية. استخدم الاختصارات اللاتينية "
-            "فقط للمصطلحات الشائعة (مثل EMG، AI).\n"
-            "4. لا تُدخل كلمات إسبانية أو إنجليزية داخل الجمل العربية.\n"
-            "5. لا تنسخ أخطاء OCR أو نصوص مشوهة من السياق.\n"
-            "6. استخدم الترقيم العربي: ، ؛ ؟\n"
-            "7. إذا لم تجد أي معلومات ذات صلة، قل: "
+            "2. قدم إجابة موجزة ومتماسكة بالعربية الفصحى (فقرة أو فقرتان كحد أقصى).\n"
+            "3. اكتب بالعربية الفصحى فقط. المصادر قد تكون بالإنجليزية لكن الإجابة "
+            "يجب أن تكون عربية بالكامل.\n"
+            "4. ترجم المصطلحات الأجنبية إلى العربية (مثال: Mechatronics → ميكاترونيكس). "
+            "لا تدمج حروفاً لاتينية داخل كلمات عربية (مثال خاطئ: ميكانtroniks).\n"
+            "5. استخدم الاختصارات اللاتينية فقط عند الضرورة (مثل AI، ML).\n"
+            "6. لا تنسخ أخطاء OCR أو نصوص مشوهة من السياق.\n"
+            "7. استخدم الترقيم العربي: ، ؛ ؟\n"
+            "8. قدّم إجابة واحدة متماسكة فقط. لا تكرر نفس المعلومة بصيغ مختلفة.\n"
+            "9. إذا لم تجد أي معلومات ذات صلة، قل: "
             "«لا أستطيع العثور على إجابة في المعلومات المتوفرة.»",
         ),
         (
             "human",
             "**المعلومات من قاعدة المعرفة:**\n{context}\n\n"
             "**السؤال:**\n{question}\n\n"
-            "**الإجابة (يجب أن تكون شاملة ومبنية على المعلومات المقدمة):**",
+            "**الإجابة (فقرة واحدة متماسكة، دون تكرار):**",
         ),
     ]
 )
@@ -44,20 +49,77 @@ ENGLISH_RAG_PROMPT = ChatPromptTemplate.from_messages(
             "on the provided knowledge base information.\n\n"
             "Important Instructions:\n"
             "1. Read the provided information carefully and use it to answer.\n"
-            "2. Provide a comprehensive answer based on the available information.\n"
+            "2. Provide a concise, unified answer (at most two short paragraphs).\n"
             "3. If the information contains the answer, use it directly with appropriate context.\n"
             "4. If the information is partial, clearly state what is available.\n"
-            "5. Only if you cannot find any relevant information, say: "
+            "5. Provide ONE consolidated answer only. Do not repeat the same "
+            "information in different wording.\n"
+            "6. Only if you cannot find any relevant information, say: "
             '"I cannot find an answer in the provided information."',
         ),
         (
             "human",
             "**Information from Knowledge Base:**\n{context}\n\n"
             "**Question:**\n{question}\n\n"
-            "**Answer (must be comprehensive and based on the provided information):**",
+            "**Answer (one cohesive response, no repetition):**",
         ),
     ]
 )
+
+
+def _word_set(text: str) -> set[str]:
+    return {word for word in re.findall(r"\w+", text.lower()) if len(word) > 2}
+
+
+def _jaccard_similarity(left: set[str], right: set[str]) -> float:
+    if not left or not right:
+        return 0.0
+    return len(left & right) / len(left | right)
+
+
+def deduplicate_chunks(
+    chunks: list[tuple[Document, float]],
+    similarity_threshold: float = 0.65,
+) -> list[tuple[Document, float]]:
+    unique: list[tuple[Document, float]] = []
+    for doc, score in chunks:
+        words = _word_set(doc.page_content)
+        if any(
+            _jaccard_similarity(words, _word_set(existing.page_content))
+            >= similarity_threshold
+            for existing, _ in unique
+        ):
+            continue
+        unique.append((doc, score))
+    return unique
+
+
+def _paragraph_prefix(text: str, words: int = 5) -> str:
+    tokens = re.findall(r"\w+", text.lower())
+    return " ".join(tokens[:words])
+
+
+def deduplicate_answer(text: str, similarity_threshold: float = 0.45) -> str:
+    paragraphs = [part.strip() for part in re.split(r"\n\s*\n", text.strip()) if part.strip()]
+    if len(paragraphs) <= 1:
+        paragraphs = [part.strip() for part in text.split("\n") if part.strip()]
+
+    unique: list[str] = []
+    seen_prefixes: set[str] = set()
+    for paragraph in paragraphs:
+        prefix = _paragraph_prefix(paragraph)
+        words = _word_set(paragraph)
+        if prefix in seen_prefixes:
+            continue
+        if any(
+            _jaccard_similarity(words, _word_set(kept)) >= similarity_threshold
+            for kept in unique
+        ):
+            continue
+        seen_prefixes.add(prefix)
+        unique.append(paragraph)
+
+    return "\n\n".join(unique)
 
 
 class RetrievalService:
@@ -171,8 +233,12 @@ class GenerationService:
         language: str | None = None,
     ) -> str:
         lang = resolve_language(question, language)
-        context = self.build_context(chunks, language=lang)
+        distinct_chunks = deduplicate_chunks(chunks)[:5]
+        context = self.build_context(distinct_chunks, language=lang)
         prompt = ARABIC_RAG_PROMPT if lang == "ar" else ENGLISH_RAG_PROMPT
         chain = prompt | self.llm
         response = await chain.ainvoke({"context": context, "question": question})
-        return response.content
+        answer = deduplicate_answer(response.content)
+        if lang == "ar":
+            answer = sanitize_arabic_answer(answer)
+        return answer
