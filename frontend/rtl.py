@@ -24,10 +24,40 @@ def format_text_breaks(text: str) -> str:
     return "\n".join(formatted)
 
 
+# Phone numbers, emails, and URLs must stay LTR inside Arabic paragraphs.
+LTR_ISOLATE_RE = re.compile(
+    r"""
+    \+[\d\s\-().]{6,30}\d
+    |\b(?:\+?962|00962)[\s\-]?\d{2}[\s\-]?\d{3}[\s\-]?\d{4}\b
+    |\b0\d{2}[\s\-]?\d{3}[\s\-]?\d{4}\b
+    |[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}
+    |https?://[^\s<>"']+
+    |\b\d{1,4}(?:[\s\-]\d{2,5}){2,4}\b
+    """,
+    re.VERBOSE,
+)
+
+
+def wrap_ltr_isolates(text: str) -> str:
+    parts: list[str] = []
+    last = 0
+    for match in LTR_ISOLATE_RE.finditer(text):
+        parts.append(html.escape(text[last : match.start()]))
+        segment = html.escape(match.group(0).strip())
+        parts.append(
+            '<span dir="ltr" class="ltr-isolate" '
+            'style="unicode-bidi:isolate; direction:ltr; display:inline-block;">'
+            f"{segment}</span>"
+        )
+        last = match.end()
+    parts.append(html.escape(text[last:]))
+    return "".join(parts)
+
+
 def render_bidi_text(text: str, *, monospace: bool = False) -> None:
     import streamlit as st
 
-    safe = html.escape(format_text_breaks(text)).replace("\n", "<br>")
+    safe = wrap_ltr_isolates(format_text_breaks(text)).replace("\n", "<br>")
     mono = "font-family: monospace; white-space: pre-wrap;" if monospace else ""
     st.markdown(
         f'<div dir="auto" class="bidi-text" style="{mono}">{safe}</div>',
@@ -59,6 +89,13 @@ BIDI_CSS = """
 [data-testid="stChatInput"] > div {
     min-height: 3.5rem !important;
     align-items: center !important;
+}
+
+.ltr-isolate {
+    direction: ltr !important;
+    unicode-bidi: isolate !important;
+    display: inline-block !important;
+    text-align: left !important;
 }
 """
 
