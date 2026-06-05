@@ -10,7 +10,7 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+asyncpg://rag:rag_secret@localhost:5432/ragdb"
     ollama_base_url: str = "http://localhost:11434"
-    ollama_model: str = "llama3.2"
+    ollama_model: str = "gemma4:e2b"
     embedding_model: str = "intfloat/multilingual-e5-large"
     llm_temperature: float = 0.0
     vector_store_path: Path = Path("./data/vector_store")

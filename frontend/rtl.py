@@ -76,7 +76,7 @@ UI_STRINGS = {
     "ar": {
         "page_title": "مساعد ذكي — Offline",
         "title": "💬 اسأل مستنداتك",
-        "caption": "مدعوم بـ multilingual-e5-large و TurboVec و Ollama (Llama 3.2)",
+        "caption": "مدعوم بـ multilingual-e5-large و TurboVec و Ollama (Gemma 4)",
         "sidebar_title": "📚 مساعد RAG",
         "sidebar_caption": "100% Offline — TurboVec + Ollama",
         "chat_input": "اكتب سؤالك بالعربية أو الإنجليزية...",
@@ -100,7 +100,7 @@ UI_STRINGS = {
     "en": {
         "page_title": "RAG Chatbot — Offline",
         "title": "💬 Ask your documents",
-        "caption": "Powered by multilingual-e5-large, TurboVec, and Ollama (Llama 3.2)",
+        "caption": "Powered by multilingual-e5-large, TurboVec, and Ollama (Gemma 4)",
         "sidebar_title": "📚 RAG Chatbot",
         "sidebar_caption": "100% Offline — TurboVec + Ollama",
         "chat_input": "Ask a question in Arabic or English...",
