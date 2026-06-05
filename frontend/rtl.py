@@ -50,6 +50,15 @@ BIDI_CSS = """
     direction: auto !important;
     text-align: start !important;
     unicode-bidi: plaintext !important;
+    min-height: 3.5rem !important;
+    line-height: 1.45 !important;
+    padding-top: 0.75rem !important;
+    padding-bottom: 0.75rem !important;
+}
+
+[data-testid="stChatInput"] > div {
+    min-height: 3.5rem !important;
+    align-items: center !important;
 }
 """
 
@@ -154,7 +163,7 @@ UI_STRINGS = {
         "sidebar_title": "📚 RAG Chatbot",
         "sidebar_caption": "100% Offline — TurboVec + Ollama",
         "chat_input": "Ask a question in Arabic or English...",
-        "portfolio_chat_input": "Ask about my experience, skills, certifications, or projects...",
+        "portfolio_chat_input": "Ask about experience, skills, certifications, projects...",
         "upload": "Upload Documents",
         "upload_types": "PDF · Word · Markdown · TXT · JSON",
         "ingest": "Ingest Document",

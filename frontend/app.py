@@ -14,7 +14,9 @@ CHAT_TIMEOUT = 300.0
 if "language" not in st.session_state:
     st.session_state.language = "ar"
 
-lang = st.session_state.language
+
+def current_lang() -> str:
+    return st.session_state.language
 
 
 def is_portfolio_mode() -> bool:
@@ -25,6 +27,7 @@ def is_portfolio_mode() -> bool:
 
 
 portfolio_mode = is_portfolio_mode()
+lang = current_lang()
 
 st.set_page_config(
     page_title="Portfolio Assistant" if portfolio_mode else t(lang, "page_title"),
@@ -72,7 +75,25 @@ def init_portfolio_defaults() -> None:
     st.session_state.setdefault("document_id", None)
 
 
+def set_language(code: str) -> None:
+    if st.session_state.language == code:
+        return
+
+    st.session_state.language = code
+    welcome_key = "portfolio_welcome" if portfolio_mode else "welcome"
+    messages = st.session_state.get("messages", [])
+    has_user_messages = any(message.get("role") == "user" for message in messages)
+
+    if not has_user_messages:
+        st.session_state.messages = [
+            {"role": "assistant", "content": t(code, welcome_key), "sources": []}
+        ]
+
+    st.rerun()
+
+
 def render_language_switcher(*, compact: bool = False) -> None:
+    lang = current_lang()
     if compact:
         col1, col2, _ = st.columns([1, 1, 4])
     else:
@@ -85,8 +106,7 @@ def render_language_switcher(*, compact: bool = False) -> None:
             type="primary" if lang == "en" else "secondary",
             key="lang_en",
         ):
-            st.session_state.language = "en"
-            st.rerun()
+            set_language("en")
     with col2:
         if st.button(
             t("ar", "lang_ar"),
@@ -94,8 +114,7 @@ def render_language_switcher(*, compact: bool = False) -> None:
             type="primary" if lang == "ar" else "secondary",
             key="lang_ar",
         ):
-            st.session_state.language = "ar"
-            st.rerun()
+            set_language("ar")
 
 
 def render_source_text(text: str, limit: int = 300) -> None:
@@ -104,6 +123,8 @@ def render_source_text(text: str, limit: int = 300) -> None:
 
 
 def render_chat() -> None:
+    lang = current_lang()
+
     if not portfolio_mode:
         st.title(t(lang, "title"))
         st.caption(t(lang, "caption"))
@@ -113,13 +134,7 @@ def render_chat() -> None:
     welcome_key = "portfolio_welcome" if portfolio_mode else "welcome"
     chat_input_key = "portfolio_chat_input" if portfolio_mode else "chat_input"
 
-    if portfolio_mode:
-        if not st.session_state.get("portfolio_initialized"):
-            st.session_state.messages = [
-                {"role": "assistant", "content": t(lang, welcome_key), "sources": []}
-            ]
-            st.session_state.portfolio_initialized = True
-    elif "messages" not in st.session_state:
+    if "messages" not in st.session_state:
         st.session_state.messages = [
             {"role": "assistant", "content": t(lang, welcome_key), "sources": []}
         ]
