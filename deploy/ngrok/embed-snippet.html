@@ -1,0 +1,48 @@
+<!-- Portfolio embed — jehadabuawwad.com (Netlify)
+     iPhone iframe → ngrok URL directly = "Visit Site" forever (Safari blocks cookie in iframe).
+     FIX: proxy via your domain so the server adds ngrok-skip-browser-warning (see netlify-edge-chat.js). -->
+
+<!-- RECOMMENDED: Netlify edge proxy (no warning on iPhone or desktop) -->
+<iframe
+  id="chatbot-frame"
+  src="https://jehadabuawwad.com/chat/?portfolio=true"
+  title="Portfolio Assistant"
+  allow="clipboard-read; clipboard-write"
+  style="width:100%;height:600px;border:0;border-radius:12px;"
+></iframe>
+
+<!-- FALLBACK before Netlify edge is deployed: hide iframe on mobile, open in new tab -->
+<script>
+(function () {
+  var proxied = "https://jehadabuawwad.com/chat/?portfolio=true";
+  var direct =
+    "https://curable-steerable-obnoxious.ngrok-free.dev/?portfolio=true";
+  var isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+  var frame = document.getElementById("chatbot-frame");
+  if (!frame) return;
+
+  // If edge proxy not live yet, mobile must not use iframe
+  fetch(proxied, { method: "HEAD", mode: "no-cors" }).catch(function () {});
+  if (isMobile) {
+    frame.style.display = "none";
+    var link = document.createElement("a");
+    link.href = direct;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = "Open Portfolio Assistant";
+    link.style.cssText =
+      "display:inline-block;padding:12px 20px;background:#2563eb;color:#fff;" +
+      "border-radius:8px;text-decoration:none;font-weight:600;";
+    frame.parentNode.insertBefore(link, frame.nextSibling);
+  }
+})();
+</script>
+
+<!-- netlify.toml snippet (portfolio repo):
+[[edge_functions]]
+  path = "/chat/*"
+  function = "chat-proxy"
+
+Copy deploy/ngrok/netlify-edge-chat.js → netlify/edge-functions/chat-proxy.js
+Update NGROK_ORIGIN inside that file when tunnel URL changes.
+-->
