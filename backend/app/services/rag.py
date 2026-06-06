@@ -6,7 +6,7 @@ from langchain_ollama import ChatOllama
 
 from app.config import Settings
 from app.models.schemas import SourceChunk
-from app.services.hybrid_search import BM25Retriever, merge_hybrid_results
+from app.services.hybrid_search import BM25Retriever, expand_retrieval_query, merge_hybrid_results
 from app.services.language import (
     needs_arabic_polish,
     normalize_phone_numbers,
@@ -14,6 +14,7 @@ from app.services.language import (
     sanitize_arabic_answer,
 )
 from app.services.reranker import Reranker
+from app.services.resume_certs import format_certifications_answer
 from app.services.vector_store import VectorStoreManager
 
 ARABIC_RAG_PROMPT = ChatPromptTemplate.from_messages(
@@ -30,10 +31,20 @@ ARABIC_RAG_PROMPT = ChatPromptTemplate.from_messages(
             "4. لا تنسخ أخطاء OCR. لا تضع مراجعاً أو أقواساً في الإجابة "
             "(المصادر تُعرض منفصلة في الواجهة).\n"
             "5. عند السرد استخدم قائمة واضحة (- أو ١. ٢.).\n"
-            "6. إجابة واحدة موجزة دون تكرار.\n"
-            "7. اكتب أرقام الهاتف بالتنسيق الدولي مع + في البداية "
+            "6. قدّم إجابة شاملة ووافية: اذكر التفاصيل المهمة من المصادر "
+            "(المسميات، الشركات، التواريخ، التقنيات، الإنجازات) دون اختصار مخل.\n"
+            "7. ترجم المصطلحات التقنية إلى العربية (مثل: React → رياكت، "
+            "Flutter → فلاتر، Node.js → نود) ولا تترك كلمات إنجليزية.\n"
+            "8. اكتب أرقام الهاتف بالتنسيق الدولي مع + في البداية "
             "(مثل: +962 77 700 2130) ولا تعكس ترتيب الأرقام.\n"
-            "8. إن لم تجد معلومات: «لا أستطيع العثور على إجابة في المعلومات المتوفرة.»",
+            "9. إن لم تجد معلومات: «لا أستطيع العثور على إجابة في المعلومات المتوفرة.»\n"
+            "10. عند ذكر الشهادات: اكتب اسم كل شهادة كاملاً بالعربية ثم التاريخ "
+            "(مثل: شهادة البنفسجي في التحقق من التصميم باستخدام يو في إم — مارس 2025). "
+            "لا تكتب التاريخ وحده.\n"
+            "11. شهادات Purple وVLSI وASIC وCMOS وSystemVerilog وDesign Verification "
+            "تخص مجال أشباه الموصلات والتحقق من التصميم.\n"
+            "12. عند السؤال عن «آخر شهادة» (مفرد) اذكر الأحدث زمنياً فقط؛ "
+            "وعند «آخر 5» اذكر خمساً مرتبة من الأحدث للأقدم.",
         ),
         (
             "human",
@@ -56,10 +67,13 @@ ARABIC_POLISH_PROMPT = ChatPromptTemplate.from_messages(
             "3. أصلح الأسماء والمصطلحات المختلطة أو المشوّهة.\n"
             "4. حسّن البنية: جمل واضحة، وقوائم منظمة عند الحاجة.\n"
             "5. أزل الأقواس الفارغة وأي مراجع بين قوسين.\n"
-            "6. أعد النص النهائي فقط دون مقدمات أو تعليقات.",
+            "6. عند الشهادات: احتفظ باسم كل شهادة بالعربية مع تاريخها؛ "
+            "لا تُبقِ التاريخ دون اسم.\n"
+            "7. أعد النص النهائي فقط دون مقدمات أو تعليقات.",
         ),
         (
             "human",
+            "**مرجع المعرفة:**\n{context}\n\n"
             "**السؤال:**\n{question}\n\n"
             "**المسودة:**\n{draft}\n\n"
             "**الإجابة المنقّحة:**",
@@ -171,6 +185,7 @@ class RetrievalService:
     ) -> list[tuple[Document, float]]:
         k = top_k or self.settings.top_k
         retrieval_k = max(k, self.settings.retrieval_min_k)
+        search_query = expand_retrieval_query(query)
 
         should_rerank = (
             use_reranker
@@ -187,15 +202,15 @@ class RetrievalService:
 
         if should_hybrid:
             vector_results = self.vector_manager.search(
-                query, k=fetch_k, document_id=document_id
+                search_query, k=fetch_k, document_id=document_id
             )
             bm25_results = await self.bm25.search(
-                query, k=fetch_k, document_id=document_id
+                search_query, k=fetch_k, document_id=document_id
             )
             results = merge_hybrid_results(vector_results, bm25_results, fetch_k)
         else:
             results = self.vector_manager.search(
-                query, k=fetch_k, document_id=document_id
+                search_query, k=fetch_k, document_id=document_id
             )
 
         if should_rerank and self.reranker and results:
@@ -259,9 +274,13 @@ class GenerationService:
             )
         return sources
 
-    async def _polish_arabic(self, draft: str, question: str) -> str:
+    async def _polish_arabic(
+        self, draft: str, question: str, context: str
+    ) -> str:
         chain = ARABIC_POLISH_PROMPT | self.llm
-        response = await chain.ainvoke({"draft": draft, "question": question})
+        response = await chain.ainvoke(
+            {"draft": draft, "question": question, "context": context}
+        )
         return response.content
 
     async def generate(
@@ -271,20 +290,23 @@ class GenerationService:
         language: str | None = None,
     ) -> str:
         lang = resolve_language(question, language)
-        distinct_chunks = deduplicate_chunks(chunks)[
-            : self.settings.max_context_chunks
-        ]
+        all_distinct = deduplicate_chunks(chunks)
+        distinct_chunks = all_distinct[: self.settings.max_context_chunks]
         context = self.build_context(distinct_chunks, language=lang)
+
+        if lang == "ar":
+            structured = format_certifications_answer(question, all_distinct)
+            if structured:
+                return sanitize_arabic_answer(structured)
+
         prompt = ARABIC_RAG_PROMPT if lang == "ar" else ENGLISH_RAG_PROMPT
         chain = prompt | self.llm
         response = await chain.ainvoke({"context": context, "question": question})
         answer = deduplicate_answer(response.content)
         if lang == "ar" and answer:
-            answer = sanitize_arabic_answer(answer)
             if self.settings.arabic_polish_enabled or needs_arabic_polish(answer):
-                answer = sanitize_arabic_answer(
-                    await self._polish_arabic(answer, question)
-                )
+                answer = await self._polish_arabic(answer, question, context)
+            answer = sanitize_arabic_answer(answer)
         elif answer:
             answer = normalize_phone_numbers(answer)
         return answer

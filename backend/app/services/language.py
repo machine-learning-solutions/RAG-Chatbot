@@ -17,6 +17,21 @@ LATIN_WORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9.\-/&]*")
 ALLOWED_LATIN_ACRONYMS = frozenset(
     {"AI", "ML", "EMG", "API", "UI", "UX", "IOT", "IOV", "RAG", "SQL", "PDF"}
 )
+ALLOWED_LATIN_TERMS = frozenset(
+    {
+        "purple",
+        "uvm",
+        "systemverilog",
+        "verilog",
+        "vhdl",
+        "asic",
+        "vlsi",
+        "cmos",
+        "rtl",
+        "vdsm",
+        "synopsys",
+    }
+)
 KEEP_CHARS = set(".,،؛؟!-:()«»+[]/@#\n\t ") | set("0123456789")
 
 URL_RE = re.compile(
@@ -30,7 +45,10 @@ CONTACT_TOKEN_PATTERNS = (URL_RE, EMAIL_RE)
 
 
 def _is_allowed_latin(word: str) -> bool:
-    return word.strip(".,;:!?()[]«»\"'").upper() in ALLOWED_LATIN_ACRONYMS
+    stripped = word.strip(".,;:!?()[]«»\"'")
+    if stripped.upper() in ALLOWED_LATIN_ACRONYMS:
+        return True
+    return stripped.lower() in ALLOWED_LATIN_TERMS
 
 
 def _strip_disallowed_scripts(text: str) -> str:

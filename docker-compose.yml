@@ -66,10 +66,10 @@ services:
       HYBRID_SEARCH_ENABLED: "true"
       TOP_K: "5"
       RETRIEVAL_MIN_K: "5"
-      ARABIC_POLISH_ENABLED: "false"
-      MAX_CONTEXT_CHUNKS: "3"
-      CONTEXT_CHUNK_MAX_CHARS: "400"
-      LLM_NUM_PREDICT: "512"
+      ARABIC_POLISH_ENABLED: "true"
+      MAX_CONTEXT_CHUNKS: "5"
+      CONTEXT_CHUNK_MAX_CHARS: "2500"
+      LLM_NUM_PREDICT: "768"
     volumes:
       - backend_data:/app/data
       - embedding_cache:/root/.cache/huggingface

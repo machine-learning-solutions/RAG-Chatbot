@@ -27,6 +27,46 @@ def resolve_language(question: str, language: str | None = None) -> str:
     return "ar" if is_arabic_question(question) else "en"
 
 
+# Arabic questions against English resumes need extra English keywords for BM25/vectors.
+_ARABIC_RETRIEVAL_HINTS: list[tuple[re.Pattern[str], str]] = [
+    (
+        re.compile(
+            r"شهاد|ترخيص|certif|license|آخر\s*\d|أحدث|latest",
+            re.IGNORECASE,
+        ),
+        "Licenses Certifications Purple March 2025",
+    ),
+    (
+        re.compile(
+            r"أشباه\s*الموصلات|موصلات|VLSI|ASIC|CMOS|"
+            r"تحقق\s*من\s*التصميم|semiconductor|synopsys|Synopsis",
+            re.IGNORECASE,
+        ),
+        "Purple Certification VLSI ASIC CMOS Design Verification "
+        "SystemVerilog UVM semiconductor Synopsis",
+    ),
+    (
+        re.compile(r"Quantalytics|كوانت|فوربس|Forbes", re.IGNORECASE),
+        "Quantalytics Forbes React Native Redux Optimum Partners",
+    ),
+    (
+        re.compile(r"JoPath|WeFix|وي\s*فiks|جو\s*بath", re.IGNORECASE),
+        "JoPath WeFix microservices Flutter GraphQL",
+    ),
+]
+
+
+def expand_retrieval_query(query: str) -> str:
+    """Append English domain terms when an Arabic question implies them."""
+    extras: list[str] = []
+    for pattern, terms in _ARABIC_RETRIEVAL_HINTS:
+        if pattern.search(query):
+            extras.append(terms)
+    if not extras:
+        return query
+    return f"{query} {' '.join(extras)}"
+
+
 @dataclass
 class ChunkRecord:
     chunk_id: str

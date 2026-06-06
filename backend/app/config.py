@@ -13,10 +13,10 @@ class Settings(BaseSettings):
     ollama_model: str = "gemma4:e2b"
     embedding_model: str = "intfloat/multilingual-e5-large"
     llm_temperature: float = 0.0
-    llm_num_predict: int = 512
-    arabic_polish_enabled: bool = False
-    max_context_chunks: int = 3
-    context_chunk_max_chars: int = 400
+    llm_num_predict: int = 768
+    arabic_polish_enabled: bool = True
+    max_context_chunks: int = 5
+    context_chunk_max_chars: int = 2500
     vector_store_path: Path = Path("./data/vector_store")
     upload_dir: Path = Path("./data/uploads")
     chunk_size: int = 512
