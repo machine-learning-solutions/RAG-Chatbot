@@ -117,11 +117,6 @@ def render_language_switcher(*, compact: bool = False) -> None:
             set_language("ar")
 
 
-def render_source_text(text: str, limit: int = 300) -> None:
-    snippet = text if len(text) <= limit else text[:limit] + "..."
-    render_bidi_text(snippet)
-
-
 def render_chat() -> None:
     lang = current_lang()
 
@@ -142,15 +137,6 @@ def render_chat() -> None:
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             render_bidi_text(message["content"])
-            if message.get("sources") and not portfolio_mode:
-                with st.expander(t(lang, "sources")):
-                    for src in message["sources"]:
-                        page = f" · p.{src['page']}" if src.get("page") else ""
-                        st.markdown(
-                            f"**{src['filename']}**{page} "
-                            f"(score: {src['score']})"
-                        )
-                        render_source_text(src["text"])
 
     if prompt := st.chat_input(t(lang, chat_input_key)):
         st.session_state.messages.append({"role": "user", "content": prompt})
@@ -170,25 +156,14 @@ def render_chat() -> None:
                     }
                     result = api_post("/api/chat", json=payload)
                     answer = result.get("answer", "No response")
-                    sources = result.get("sources", [])
 
                     render_bidi_text(answer)
-
-                    if sources and not portfolio_mode:
-                        with st.expander(f"{t(lang, 'sources')} ({len(sources)})"):
-                            for src in sources:
-                                page = f" · p.{src['page']}" if src.get("page") else ""
-                                st.markdown(
-                                    f"**{src['filename']}**{page} "
-                                    f"(score: {src['score']})"
-                                )
-                                render_source_text(src["text"], limit=500)
 
                     st.session_state.messages.append(
                         {
                             "role": "assistant",
                             "content": answer,
-                            "sources": sources,
+                            "sources": [],
                         }
                     )
                 except Exception as exc:
