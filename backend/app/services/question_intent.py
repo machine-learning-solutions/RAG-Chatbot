@@ -85,5 +85,9 @@ def is_degraded_arabic_answer(text: str) -> bool:
         r"باستخدام\s*:?\s*$",
         r"مطور ويب \(\s*و\s*\)",
         r"عمل كمطور تطبيقات باستخدام\s*:",
+        r"(?:،\s*و\s*){2,}",
+        r"باستخدام\s*،\s*و",
+        r":\s*و\s*و",
+        r"مثل\s*و\s*و",
     )
     return any(re.search(p, text) for p in degraded_patterns)

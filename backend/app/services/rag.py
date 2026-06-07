@@ -38,8 +38,10 @@ ARABIC_RAG_PROMPT = ChatPromptTemplate.from_messages(
             "5. عند السرد استخدم قائمة واضحة (- أو ١. ٢.).\n"
             "6. قدّم إجابة شاملة ووافية: اذكر التفاصيل المهمة من المصادر "
             "(المسميات، الشركات، التواريخ، التقنيات، الإنجازات) دون اختصار مخل.\n"
-            "7. ترجم المصطلحات التقنية إلى العربية (مثل: React → رياكت، "
-            "Flutter → فلاتر، Node.js → نود) ولا تترك كلمات إنجليزية.\n"
+            "7. ترجم كل المصطلحات التقنية إلى العربية (React → رياكت، "
+            "TypeScript → تايب سكريبت، Node.js → نود، GraphQL → جراف كيو إل، "
+            "PostgreSQL → بوستجري). لا تترك كلمات إنجليزية ولا قوائم فارغة "
+            "(ممنوع: «باستخدام، و، و» أو «مثل و و»).\n"
             "8. اكتب أرقام الهاتف بالتنسيق الدولي مع + في البداية "
             "(مثل: +962 77 700 2130) ولا تعكس ترتيب الأرقام.\n"
             "9. إن لم تجد المعلومة المطلوبة في المصادر، أجب بإيجاز أنها غير متوفرة "
@@ -72,7 +74,8 @@ ARABIC_POLISH_PROMPT = ChatPromptTemplate.from_messages(
             "سليمة نحوياً وبلاغياً.\n\n"
             "القواعد:\n"
             "1. التزم بحقائق مرجع المعرفة والمسودة؛ لا تضف ولا تحذف معلومات.\n"
-            "2. أزل الكلمات الإنجليزية واستبدلها بمرادف عربي (إلا الاختصارات: AI، ML).\n"
+            "2. أزل كل الكلمات الإنجليزية واستبدلها بترجمة عربية كاملة "
+            "(إلا: AI، ML، API، IoT، JWT). لا تترك حروف عطف دون كلمات.\n"
             "3. أصلح الأسماء والمصطلحات المختلطة أو المشوّهة.\n"
             "4. حسّن البنية: جمل واضحة، وقوائم منظمة عند الحاجة.\n"
             "5. أزل الأقواس الفارغة وأي مراجع بين قوسين.\n"
@@ -321,6 +324,9 @@ class GenerationService:
             if self.settings.arabic_polish_enabled or needs_arabic_polish(answer):
                 answer = await self._polish_arabic(answer, question, context)
             answer = sanitize_arabic_answer(answer)
+            if is_degraded_arabic_answer(answer):
+                answer = await self._polish_arabic(answer, question, context)
+                answer = sanitize_arabic_answer(answer)
             if is_degraded_arabic_answer(answer):
                 answer = sanitize_arabic_answer(NOT_FOUND_AR)
         elif answer:

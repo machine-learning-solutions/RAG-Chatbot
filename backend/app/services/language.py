@@ -30,8 +30,92 @@ ALLOWED_LATIN_TERMS = frozenset(
         "rtl",
         "vdsm",
         "synopsys",
+        "iot",
+        "jwt",
+        "otp",
+        "vfd",
+        "vvvf",
+        "plc",
+        "scada",
+        "pca",
+        "lda",
     }
 )
+
+# English tech terms → Arabic transliteration (applied before stripping Latin).
+TECH_GLOSSARY: dict[str, str] = {
+    "typescript": "تايب سكريبت",
+    "javascript": "جافاسكريبت",
+    "node.js": "نود",
+    "nodejs": "نود",
+    "node": "نود",
+    "react": "رياكت",
+    "react.js": "رياكت",
+    "next.js": "نيكست",
+    "nextjs": "نيكست",
+    "express": "إكسبريس",
+    "express.js": "إكسبريس",
+    "graphql": "جراف كيو إل",
+    "postgresql": "بوستجري إس كيو إل",
+    "postgres": "بوستجري",
+    "mysql": "ماي إس كيو إل",
+    "sequelize": "سيكوالايز",
+    "firebase": "فايربيس",
+    "flutter": "فلاتر",
+    "django": "جانغو",
+    "python": "بايثون",
+    "dart": "دارت",
+    "pytorch": "بايتورش",
+    "tensorflow": "تينسورفلو",
+    "scikit-learn": "سكيكيت ليرن",
+    "sklearn": "سكيكيت ليرن",
+    "pandas": "باندا",
+    "matplotlib": "ماتبلوتليب",
+    "netlify": "نتلايف",
+    "heroku": "هيروكو",
+    "redux": "ريدكس",
+    "solid": "سوليد",
+    "apollo": "أبولو",
+    "server": "سيرفر",
+    "docker": "دوكر",
+    "compose": "كومبوز",
+    "signalr": "سيجنال آر",
+    "konva": "كونفا",
+    "mongoose": "مونجووس",
+    "mongodb": "مونجو دي بي",
+    "n8n": "إن eight إن",
+    "llama": "لاما",
+    "llm": "نموذج لغوي",
+    "bm25": "بي إم 25",
+    "streamlit": "ستريمليت",
+    "fastapi": "فاست إيه بي آي",
+    "ollama": "أولاما",
+    "turbovec": "تيربو فيك",
+    "branch": "برانش",
+    "redux": "ريدكس",
+    "atomic": "ذري",
+    "design": "تصميم",
+    "pattern": "نمط",
+    "clean": "نظيف",
+    "architecture": "بنية",
+    "microservices": "خدمات مصغرة",
+    "restful": "ريست",
+    "rest": "ريست",
+    "orm": "أو آر إم",
+    "ci/cd": "سي آي/سي دي",
+    "devops": "ديف أوبس",
+    "maddpg": "مادد بي جي",
+    "greedy": "جريدي",
+    "blca": "بي إل سي إيه",
+    "iov": "إنترنت المركبات",
+    "iot": "إنترنت الأشياء",
+    "vfd": "محرك تردد متغير",
+    "vvvf": "محرك جهد وتردد متغير",
+    "plc": "تحكم منطقي قابل للبرمجة",
+    "scada": "سكادا",
+    "matlab": "ماتلاب",
+    "opencv": "أوبن سي في",
+}
 KEEP_CHARS = set(".,،؛؟!-:()«»+[]/@#\n\t ") | set("0123456789")
 
 URL_RE = re.compile(
@@ -94,12 +178,38 @@ def _strip_latin_parentheticals(text: str) -> str:
     return re.sub(r"\(([^)]*)\)", replace, text)
 
 
-def _remove_stray_latin_words(text: str) -> str:
+def _glossary_key(word: str) -> str:
+    return word.strip(".,;:!?()[]«»\"'-*").lower()
+
+
+def _replace_latin_words(text: str) -> str:
+    """Translate known tech terms; drop unknown Latin only as last resort."""
+
     def replace(match: re.Match[str]) -> str:
         word = match.group(0)
-        return word if _is_allowed_latin(word) else ""
+        if _is_allowed_latin(word):
+            return word
+        key = _glossary_key(word)
+        if key in TECH_GLOSSARY:
+            return TECH_GLOSSARY[key]
+        for term, arabic in sorted(TECH_GLOSSARY.items(), key=lambda x: -len(x[0])):
+            if key == term or key.startswith(term + ".") or term in key:
+                return arabic
+        return ""
 
     return LATIN_WORD_RE.sub(replace, text)
+
+
+def _repair_orphan_conjunctions(text: str) -> str:
+    """Fix lists gutted by stripped Latin, e.g. «باستخدام، و، و»."""
+    text = re.sub(r"(?:،\s*و\s*){2,}", "، ", text)
+    text = re.sub(r"باستخدام\s*،\s*(?:و\s*،?\s*)+", "باستخدام ", text)
+    text = re.sub(r"مثل\s*(?:و\s*،?\s*)+", "مثل ", text)
+    text = re.sub(r":\s*(?:و\s*،?\s*)+", ": ", text)
+    text = re.sub(r"\(\s*و\s*\)", "", text)
+    text = re.sub(r"\s+و\s+و\s+", " ", text)
+    text = re.sub(r"،\s*و\s*([،.؟!]|$)", r"\1", text)
+    return text
 
 
 def _remove_empty_parentheses(text: str) -> str:
@@ -176,6 +286,8 @@ def normalize_phone_numbers(text: str) -> str:
 def needs_arabic_polish(text: str) -> bool:
     if re.search(r"\(\s*\)", text):
         return True
+    if re.search(r"(?:،\s*و\s*){2,}|باستخدام\s*،\s*و", text):
+        return True
     for token in re.split(r"\s+", text):
         if not token:
             continue
@@ -194,8 +306,9 @@ def sanitize_arabic_answer(text: str) -> str:
     cleaned = _strip_disallowed_scripts(masked)
     cleaned = _strip_latin_parentheticals(cleaned)
     cleaned = _normalize_mixed_script_tokens(cleaned)
-    cleaned = _remove_stray_latin_words(cleaned)
+    cleaned = _replace_latin_words(cleaned)
     cleaned = _remove_empty_parentheses(cleaned)
+    cleaned = _repair_orphan_conjunctions(cleaned)
     cleaned = _normalize_whitespace(cleaned)
     cleaned = normalize_phone_numbers(cleaned)
     return _unmask_contact_tokens(cleaned, token_store)

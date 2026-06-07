@@ -53,6 +53,13 @@ _ARABIC_RETRIEVAL_HINTS: list[tuple[re.Pattern[str], str]] = [
         re.compile(r"JoPath|WeFix|وي\s*فiks|جو\s*بath", re.IGNORECASE),
         "JoPath WeFix microservices Flutter GraphQL",
     ),
+    (
+        re.compile(
+            r"إنترنت\s*الأشياء|iot|internet\s*of\s*things|أتمتة|تحكم|plc|scada|vfd",
+            re.IGNORECASE,
+        ),
+        "IoT industrial automation control systems PLC SCADA VFD electrical",
+    ),
 ]
 
 
