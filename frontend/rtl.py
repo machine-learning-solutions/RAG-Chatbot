@@ -10,6 +10,32 @@ def contains_arabic(text: str) -> bool:
     return bool(ARABIC_RE.search(text))
 
 
+NUM_ONLY_LINE = re.compile(r"^([٠-٩]+|\d+)\.\s*$")
+NUM_HEADING_LINE = re.compile(r"^([٠-٩]+|\d+)\.\s*(.+)$")
+ARABIC_LIST_SPLIT = re.compile(r"(?=^(?:[٠-٩]+|\d+)\.)", re.MULTILINE)
+
+
+def merge_orphan_list_numbers(text: str) -> str:
+    """Join «٣.» on its own line with the next line so RTL layout stays correct."""
+    lines = text.split("\n")
+    merged: list[str] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        stripped = line.strip()
+        if (
+            NUM_ONLY_LINE.match(stripped)
+            and index + 1 < len(lines)
+            and lines[index + 1].strip()
+        ):
+            merged.append(f"{stripped} {lines[index + 1].strip()}")
+            index += 2
+            continue
+        merged.append(line)
+        index += 1
+    return "\n".join(merged)
+
+
 def format_text_breaks(text: str) -> str:
     """Add line breaks after sentences and bullet points for readability."""
     lines = text.split("\n")
@@ -22,6 +48,10 @@ def format_text_breaks(text: str) -> str:
             if index + 1 < len(lines) and lines[index + 1].strip():
                 formatted.append("")
     return "\n".join(formatted)
+
+
+def prepare_arabic_text(text: str) -> str:
+    return merge_orphan_list_numbers(format_text_breaks(text))
 
 
 # Phone numbers, emails, and URLs must stay LTR inside Arabic paragraphs.
@@ -54,15 +84,75 @@ def wrap_ltr_isolates(text: str) -> str:
     return "".join(parts)
 
 
+def _render_plain_arabic_html(text: str) -> str:
+    safe = wrap_ltr_isolates(text).replace("\n", "<br>")
+    return f'<div dir="rtl" class="bidi-text bidi-text-rtl">{safe}</div>'
+
+
+def _render_arabic_numbered_list_html(text: str) -> str:
+    """Render Arabic ١. ٢. sections as a proper RTL ordered list."""
+    blocks = ARABIC_LIST_SPLIT.split(text)
+    parts: list[str] = ['<div dir="rtl" class="bidi-text bidi-text-rtl">']
+
+    preamble = blocks[0].strip() if blocks else ""
+    if preamble:
+        parts.append(
+            f'<div class="bidi-preamble">{wrap_ltr_isolates(preamble).replace(chr(10), "<br>")}</div>'
+        )
+
+    items: list[str] = []
+    for block in blocks[1:]:
+        block = block.strip()
+        if not block:
+            continue
+        lines = block.split("\n")
+        heading_match = NUM_HEADING_LINE.match(lines[0].strip())
+        if not heading_match:
+            continue
+        title = heading_match.group(2).strip()
+        body = "\n".join(lines[1:]).strip()
+        title_html = wrap_ltr_isolates(title)
+        if body:
+            body_html = wrap_ltr_isolates(body).replace("\n", "<br>")
+            items.append(
+                f'<li><span class="ar-list-title">{title_html}</span>'
+                f'<div class="ar-list-body">{body_html}</div></li>'
+            )
+        else:
+            items.append(f'<li><span class="ar-list-title">{title_html}</span></li>')
+
+    if items:
+        parts.append('<ol dir="rtl" class="ar-num-list">')
+        parts.extend(items)
+        parts.append("</ol>")
+
+    parts.append("</div>")
+    return "".join(parts)
+
+
+def build_bidi_html(text: str) -> str:
+    prepared = prepare_arabic_text(text)
+    if contains_arabic(prepared) and re.search(
+        r"^(?:[٠-٩]+|\d+)\.", prepared, re.MULTILINE
+    ):
+        return _render_arabic_numbered_list_html(prepared)
+    if contains_arabic(prepared):
+        return _render_plain_arabic_html(prepared)
+    safe = wrap_ltr_isolates(prepared).replace("\n", "<br>")
+    return f'<div dir="auto" class="bidi-text">{safe}</div>'
+
+
 def render_bidi_text(text: str, *, monospace: bool = False) -> None:
     import streamlit as st
 
-    safe = wrap_ltr_isolates(format_text_breaks(text)).replace("\n", "<br>")
-    mono = "font-family: monospace; white-space: pre-wrap;" if monospace else ""
-    st.markdown(
-        f'<div dir="auto" class="bidi-text" style="{mono}">{safe}</div>',
-        unsafe_allow_html=True,
-    )
+    html_body = build_bidi_html(text)
+    if monospace:
+        html_body = html_body.replace(
+            'class="bidi-text',
+            'class="bidi-text" style="font-family: monospace; white-space: pre-wrap;"',
+            1,
+        )
+    st.markdown(html_body, unsafe_allow_html=True)
 
 
 BIDI_CSS = """
@@ -96,6 +186,43 @@ BIDI_CSS = """
     unicode-bidi: isolate !important;
     display: inline-block !important;
     text-align: left !important;
+}
+
+.bidi-text-rtl,
+.bidi-text[dir="rtl"] {
+    direction: rtl !important;
+    text-align: right !important;
+    unicode-bidi: embed !important;
+}
+
+.bidi-preamble {
+    margin-bottom: 0.75rem;
+}
+
+ol.ar-num-list {
+    direction: rtl !important;
+    text-align: right !important;
+    list-style-type: arabic-indic;
+    list-style-position: inside;
+    padding: 0 0.25rem 0 0 !important;
+    margin: 0.5rem 0 0.75rem !important;
+}
+
+ol.ar-num-list li {
+    direction: rtl !important;
+    text-align: right !important;
+    unicode-bidi: embed !important;
+    margin-bottom: 0.85rem;
+}
+
+.ar-list-title {
+    font-weight: 600;
+}
+
+.ar-list-body {
+    margin-top: 0.35rem;
+    font-weight: 400;
+    padding-right: 0.25rem;
 }
 """
 
