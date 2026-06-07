@@ -1,4 +1,4 @@
-"""Detect questions the resume cannot answer; return helpful static responses."""
+"""Detect question intent; return concise static responses when appropriate."""
 
 from __future__ import annotations
 
@@ -12,6 +12,24 @@ PRICING_RE = re.compile(
 
 PROJECT_COUNT_RE = re.compile(
     r"كم\s*(?:عدد\s*)?مشروع|عدد\s*المشاريع|how\s+many\s+projects",
+    re.IGNORECASE,
+)
+
+GREETING_RE = re.compile(
+    r"^(?:مرحبا|مرحباً|السلام\s+عليكم|هلا|أهلاً?|صباح\s+الخير|مساء\s+الخير|"
+    r"hello|hi|hey|good\s+(?:morning|evening))\s*[!؟?.]*\s*$",
+    re.IGNORECASE,
+)
+
+INTRO_ABOUT_RE = re.compile(
+    r"(?:"
+    r"من\s+أنت|من\s+هو(?:\s+جهاد)?|مين\s+(?:جهاد|أنت|هو)|"
+    r"عرفني(?:\s+عن)?(?:\s+نفسك|\s+جهاد|\s+نفسه)?|"
+    r"احكيلي\s+عن|خبرني\s+عن|قلّ?ي\s+عن\s+نفسك|"
+    r"قدّم\s+نفسك|قدم\s+نفسك|نبذة\s+عن|تعريف\s+(?:عن|مختصر)?|"
+    r"who\s+are\s+you|who\s+is\s+jehad|introduce\s+yourself|"
+    r"tell\s+me\s+about\s+(?:you|jehad|yourself)"
+    r")",
     re.IGNORECASE,
 )
 
@@ -40,19 +58,67 @@ PROJECT_COUNT_ANSWER_AR = (
     "jehadabuawwad@outlook.com أو +962 77 700 2130."
 )
 
+GREETING_ANSWER_AR = (
+    "أهلاً وسهلاً! أنا مساعد جهاد أبو عواد، وأجيب من سيرته الذاتية.\n\n"
+    "اسألني عن خبرته، مهاراته، شهاداته، مشاريعه، أو كيفية التواصل معه."
+)
+
+INTRO_ANSWER_AR = (
+    "أهلاً بك!\n\n"
+    "جهاد أبو عواد مهندس ميكاترونكس ومطور برمجيات من عمّان، "
+    "يجمع بين هندسة الأنظمة الصناعية وتطوير الويب والموبايل والذكاء الاصطناعي.\n\n"
+    "يمكنني الإجابة عن خبرته العملية، مهاراته التقنية، شهاداته، ومشاريعه. "
+    "ما الذي تود معرفته تحديداً؟"
+)
+
+
+def is_greeting(question: str) -> bool:
+    return bool(GREETING_RE.match(question.strip()))
+
+
+def is_intro_question(question: str) -> bool:
+    text = question.strip()
+    if is_greeting(text):
+        return True
+    if INTRO_ABOUT_RE.search(text):
+        return True
+    return False
+
 
 def try_static_answer(question: str, language: str) -> str | None:
-    """Return a canned answer when the resume cannot contain the requested info."""
-    if language != "ar" and not PRICING_RE.search(question):
-        return None
+    """Return a canned answer for known intents or missing resume fields."""
+    text = question.strip()
 
-    if PRICING_RE.search(question):
+    if is_greeting(text):
+        return GREETING_ANSWER_AR if language == "ar" else _greeting_en()
+
+    if is_intro_question(text):
+        return INTRO_ANSWER_AR if language == "ar" else _intro_en()
+
+    if PRICING_RE.search(text):
         return PRICING_ANSWER_AR if language == "ar" else _pricing_en()
 
-    if PROJECT_COUNT_RE.search(question):
+    if PROJECT_COUNT_RE.search(text):
         return PROJECT_COUNT_ANSWER_AR if language == "ar" else _project_count_en()
 
     return None
+
+
+def _greeting_en() -> str:
+    return (
+        "Hello! I'm Jehad Abu Awwad's portfolio assistant.\n\n"
+        "Ask me about his experience, skills, certifications, projects, or how to reach him."
+    )
+
+
+def _intro_en() -> str:
+    return (
+        "Hello!\n\n"
+        "Jehad Abu Awwad is a Mechatronics Engineer and software developer based in Amman, "
+        "combining industrial systems engineering with web, mobile, and AI development.\n\n"
+        "I can answer questions about his work experience, technical skills, certifications, "
+        "and projects. What would you like to know?"
+    )
 
 
 def _pricing_en() -> str:
