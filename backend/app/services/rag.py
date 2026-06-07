@@ -13,6 +13,11 @@ from app.services.language import (
     resolve_language,
     sanitize_arabic_answer,
 )
+from app.services.question_intent import (
+    NOT_FOUND_AR,
+    is_degraded_arabic_answer,
+    try_static_answer,
+)
 from app.services.reranker import Reranker
 from app.services.resume_certs import format_certifications_answer
 from app.services.vector_store import VectorStoreManager
@@ -37,14 +42,18 @@ ARABIC_RAG_PROMPT = ChatPromptTemplate.from_messages(
             "Flutter → فلاتر، Node.js → نود) ولا تترك كلمات إنجليزية.\n"
             "8. اكتب أرقام الهاتف بالتنسيق الدولي مع + في البداية "
             "(مثل: +962 77 700 2130) ولا تعكس ترتيب الأرقام.\n"
-            "9. إن لم تجد معلومات: «لا أستطيع العثور على إجابة في المعلومات المتوفرة.»\n"
+            "9. إن لم تجد المعلومة المطلوبة في المصادر، أجب بإيجاز أنها غير متوفرة "
+            "ولا تسرد خبرات أو مشاريع غير مرتبطة. لا تخمّن ولا تستنتج.\n"
             "10. عند ذكر الشهادات: اكتب اسم كل شهادة كاملاً بالعربية ثم التاريخ "
-            "(مثل: شهادة البنفسجي في التحقق من التصميم باستخدام يو في إم — مارس 2025). "
+            "(مثل: شهادة البنفسجي في التحقق من التصميم باستخدام يو في إم - مارس 2025). "
             "لا تكتب التاريخ وحده.\n"
             "11. شهادات Purple وVLSI وASIC وCMOS وSystemVerilog وDesign Verification "
             "تخص مجال أشباه الموصلات والتحقق من التصميم.\n"
             "12. عند السؤال عن «آخر شهادة» (مفرد) اذكر الأحدث زمنياً فقط؛ "
-            "وعند «آخر 5» اذكر خمساً مرتبة من الأحدث للأقدم.",
+            "وعند «آخر 5» اذكر خمساً مرتبة من الأحدث للأقدم.\n"
+            "13. «كم بده/بكم/السعر/التكلفة» تعني التسعير والأتعاب وليس عدد المشاريع.\n"
+            "14. إن سُئل عن التسعير أو عدد المشاريع ولم يُذكر في المصادر، "
+            "قل بوضوح أن السيرة لا تتضمن هذه المعلومة واقترح التواصل عبر البريد أو الهاتف.",
         ),
         (
             "human",
@@ -290,6 +299,11 @@ class GenerationService:
         language: str | None = None,
     ) -> str:
         lang = resolve_language(question, language)
+
+        static = try_static_answer(question, lang)
+        if static:
+            return static if lang != "ar" else sanitize_arabic_answer(static)
+
         all_distinct = deduplicate_chunks(chunks)
         distinct_chunks = all_distinct[: self.settings.max_context_chunks]
         context = self.build_context(distinct_chunks, language=lang)
@@ -307,6 +321,8 @@ class GenerationService:
             if self.settings.arabic_polish_enabled or needs_arabic_polish(answer):
                 answer = await self._polish_arabic(answer, question, context)
             answer = sanitize_arabic_answer(answer)
+            if is_degraded_arabic_answer(answer):
+                answer = sanitize_arabic_answer(NOT_FOUND_AR)
         elif answer:
             answer = normalize_phone_numbers(answer)
         return answer
