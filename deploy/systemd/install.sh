@@ -17,6 +17,10 @@ echo "==> Installing new services..."
 cp "$SCRIPT_DIR/chatbot.service" /etc/systemd/system/chatbot.service
 cp "$SCRIPT_DIR/chatbot-ngrok.service" /etc/systemd/system/chatbot-ngrok.service
 
+# Only one ngrok may bind the chatbot URL (ERR_NGROK_6030 if duplicated).
+systemctl --user stop chatbot-ngrok.service 2>/dev/null || true
+systemctl --user disable chatbot-ngrok.service 2>/dev/null || true
+
 systemctl daemon-reload
 
 echo "==> Enabling services..."
@@ -26,6 +30,10 @@ systemctl enable chatbot-ngrok.service
 echo "==> Starting services..."
 systemctl start chatbot.service
 sleep 5
+# Restart ngrok cleanly so a stale duplicate endpoint is not left online.
+systemctl stop chatbot-ngrok.service 2>/dev/null || true
+pkill -f "ngrok start chatbot" 2>/dev/null || true
+sleep 2
 systemctl start chatbot-ngrok.service
 
 echo ""
