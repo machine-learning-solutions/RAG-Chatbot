@@ -29,6 +29,12 @@ set -euo pipefail
 
 PORT="${PORT:-9080}"
 
+# ngrok.yml must define a `chatbot` tunnel → localhost:9080 (gateway).
+#   tunnels:
+#     chatbot:
+#       proto: http
+#       addr: 9080
+
 if ! command -v ngrok >/dev/null 2>&1; then
   echo "Install ngrok: https://ngrok.com/download" >&2
   exit 1
@@ -41,4 +47,4 @@ echo "Verify skip header (API only, not browser navigation):"
 echo "  curl -sI -H 'ngrok-skip-browser-warning: 1' https://YOUR.ngrok-free.dev/ | head -5"
 echo ""
 
-exec ngrok http "$PORT" --host-header=rewrite
+exec ngrok start chatbot

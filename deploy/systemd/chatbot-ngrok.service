@@ -1,12 +1,12 @@
 [Unit]
-Description=Chatbot - ngrok Tunnels
+Description=Chatbot - ngrok tunnel to gateway (port 9080)
 After=network-online.target chatbot.service
 Wants=network-online.target
 Requires=chatbot.service
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/ngrok start --all
+ExecStart=/usr/local/bin/ngrok start chatbot
 User=jadaboawwad
 Group=jadaboawwad
 StandardOutput=journal

@@ -6,6 +6,17 @@
 const NGROK_ORIGIN = "https://curable-steerable-obnoxious.ngrok-free.dev";
 
 export default async (request) => {
+  if (request.method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }
+
   const url = new URL(request.url);
   const path = url.pathname.replace(/^\/rag-api/, "") || "/";
   const target = new URL(path, NGROK_ORIGIN);
@@ -15,10 +26,16 @@ export default async (request) => {
   headers.set("Host", new URL(NGROK_ORIGIN).host);
   headers.set("ngrok-skip-browser-warning", "1");
   headers.set("User-Agent", "PortfolioChat/1.0");
+  headers.delete("content-length");
 
-  return fetch(target.toString(), {
+  const init = {
     method: request.method,
     headers,
-    body: request.body,
-  });
+  };
+
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    init.body = await request.arrayBuffer();
+  }
+
+  return fetch(target.toString(), init);
 };

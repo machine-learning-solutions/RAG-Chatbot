@@ -5,7 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/ngrok http 9080 --host-header=rewrite
+ExecStart=/usr/local/bin/ngrok start chatbot
 Restart=on-failure
 RestartSec=5
 
