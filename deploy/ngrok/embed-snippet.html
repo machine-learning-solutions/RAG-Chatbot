@@ -1,6 +1,7 @@
 <!-- Portfolio embed — jehadabuawwad.com (Netlify)
-     iPhone iframe → ngrok URL directly = "Visit Site" forever (Safari blocks cookie in iframe).
-     FIX: proxy via your domain so the server adds ngrok-skip-browser-warning (see netlify-edge-chat.js). -->
+     Native chat uses /rag-api edge proxy → ngrok gateway :9080/api (fast).
+     Full Streamlit UI still available at /chat for "Open in tab".
+     ngrok must tunnel port 9080 (gateway), not 8501 — see deploy/ngrok/start.sh -->
 
 <!-- RECOMMENDED: Netlify edge proxy (no warning on iPhone or desktop) -->
 <iframe

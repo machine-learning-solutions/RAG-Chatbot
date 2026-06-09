@@ -1,11 +1,11 @@
 [Unit]
-Description=ngrok tunnel to Streamlit (port 8501)
+Description=ngrok tunnel to chatbot gateway (port 9080)
 After=network-online.target docker.service
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/ngrok http 8501 --host-header=rewrite
+ExecStart=/usr/local/bin/ngrok http 9080 --host-header=rewrite
 Restart=on-failure
 RestartSec=5
 

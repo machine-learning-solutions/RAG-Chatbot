@@ -27,7 +27,7 @@
 
 set -euo pipefail
 
-PORT="${PORT:-8501}"
+PORT="${PORT:-9080}"
 
 if ! command -v ngrok >/dev/null 2>&1; then
   echo "Install ngrok: https://ngrok.com/download" >&2
@@ -35,7 +35,7 @@ if ! command -v ngrok >/dev/null 2>&1; then
 fi
 
 echo "Starting tunnel → http://localhost:${PORT}"
-echo "Portfolio UI: add ?portfolio=true to the public URL"
+echo "Gateway :9080 → /api (FastAPI) + / (Streamlit). Portfolio: ?portfolio=true"
 echo ""
 echo "Verify skip header (API only, not browser navigation):"
 echo "  curl -sI -H 'ngrok-skip-browser-warning: 1' https://YOUR.ngrok-free.dev/ | head -5"
