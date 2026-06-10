@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     hybrid_search_enabled: bool = True
     top_k: int = 5
     retrieval_min_k: int = 5
+    torch_device: str = "cuda"
 
     @field_validator("database_url", mode="before")
     @classmethod

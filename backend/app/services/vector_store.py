@@ -6,6 +6,7 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from turbovec.langchain import TurboQuantVectorStore
 
 from app.config import Settings, get_settings
+from app.services.torch_device import get_inference_device
 
 
 class E5Embeddings(Embeddings):
@@ -14,7 +15,7 @@ class E5Embeddings(Embeddings):
     def __init__(self, model_name: str) -> None:
         self._model = HuggingFaceEmbeddings(
             model_name=model_name,
-            model_kwargs={"device": "cpu"},
+            model_kwargs={"device": get_inference_device()},
             encode_kwargs={"normalize_embeddings": True},
         )
 

@@ -5,11 +5,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router
 from app.services.database import init_db
+from app.services.warmup import warmup_models
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    await warmup_models()
     yield
 
 

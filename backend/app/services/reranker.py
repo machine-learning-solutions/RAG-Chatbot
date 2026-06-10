@@ -3,6 +3,7 @@ from functools import lru_cache
 from sentence_transformers import CrossEncoder
 
 from app.config import Settings, get_settings
+from app.services.torch_device import get_inference_device
 
 
 class Reranker:
@@ -13,7 +14,10 @@ class Reranker:
     @property
     def model(self) -> CrossEncoder:
         if self._model is None:
-            self._model = CrossEncoder(self.settings.reranker_model)
+            self._model = CrossEncoder(
+                self.settings.reranker_model,
+                device=get_inference_device(),
+            )
         return self._model
 
     def rerank(

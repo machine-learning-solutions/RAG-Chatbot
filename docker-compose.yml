@@ -20,6 +20,10 @@ services:
     gpus: all
     environment:
       OLLAMA_KEEP_ALIVE: "-1"
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: all
+      # Unset ROCm hint so NVIDIA GPU discovery works in Docker (ollama/ollama#11852).
+      ROCR_VISIBLE_DEVICES: ""
     volumes:
       - ollama_data:/root/.ollama
     ports:
@@ -43,14 +47,18 @@ services:
     command:
       - |
         ollama pull gemma4:e2b || ollama pull gemma4:e4b || true
-        echo "Ollama model pull complete"
+        # Pre-load weights so the first visitor request stays under proxy timeouts.
+        printf 'warmup' | ollama run gemma4:e2b --think=false >/dev/null 2>&1 || true
+        echo "Ollama model pull and warmup complete"
     restart: "no"
 
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    # Embeddings on CPU — Ollama uses ~7 GB VRAM; both won't fit on 8 GB GPUs.
     environment:
+      TORCH_DEVICE: cpu
       DATABASE_URL: postgresql+asyncpg://rag:rag_secret@postgres:5432/ragdb
       OLLAMA_BASE_URL: http://ollama:11434
       OLLAMA_MODEL: gemma4:e2b
@@ -64,12 +72,13 @@ services:
       RERANKER_ENABLED: "false"
       RERANKER_MODEL: cross-encoder/mmarco-mMiniLMv2-L12-H384-v1
       HYBRID_SEARCH_ENABLED: "true"
-      TOP_K: "5"
-      RETRIEVAL_MIN_K: "5"
-      ARABIC_POLISH_ENABLED: "true"
-      MAX_CONTEXT_CHUNKS: "5"
-      CONTEXT_CHUNK_MAX_CHARS: "2500"
-      LLM_NUM_PREDICT: "768"
+      TOP_K: "3"
+      RETRIEVAL_MIN_K: "3"
+      # Polish doubles LLM latency; keep off for portfolio proxy (60s limit).
+      ARABIC_POLISH_ENABLED: "false"
+      MAX_CONTEXT_CHUNKS: "3"
+      CONTEXT_CHUNK_MAX_CHARS: "1500"
+      LLM_NUM_PREDICT: "320"
     volumes:
       - backend_data:/app/data
       - embedding_cache:/root/.cache/huggingface

@@ -15,7 +15,7 @@ langchain-huggingface==0.1.2
 # TurboVec (8x compressed vector index)
 turbovec[langchain]==0.6.0
 
-# Embeddings & optional reranker (torch installed separately as CPU build)
+# Embeddings & optional reranker (torch installed separately with CUDA in Dockerfile)
 sentence-transformers==3.3.1
 transformers==4.47.1
 

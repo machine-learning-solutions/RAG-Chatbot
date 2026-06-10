@@ -243,6 +243,7 @@ class GenerationService:
             model=settings.ollama_model,
             temperature=settings.llm_temperature,
             num_predict=settings.llm_num_predict,
+            num_ctx=2048,
         ).bind(think=False)
 
     def build_context(
@@ -323,12 +324,11 @@ class GenerationService:
         response = await chain.ainvoke({"context": context, "question": question})
         answer = deduplicate_answer(response.content)
         if lang == "ar" and answer:
-            if self.settings.arabic_polish_enabled or needs_arabic_polish(answer):
+            if self.settings.arabic_polish_enabled and (
+                needs_arabic_polish(answer) or is_degraded_arabic_answer(answer)
+            ):
                 answer = await self._polish_arabic(answer, question, context)
             answer = sanitize_arabic_answer(answer)
-            if is_degraded_arabic_answer(answer):
-                answer = await self._polish_arabic(answer, question, context)
-                answer = sanitize_arabic_answer(answer)
             if is_degraded_arabic_answer(answer):
                 answer = sanitize_arabic_answer(NOT_FOUND_AR)
         elif answer:

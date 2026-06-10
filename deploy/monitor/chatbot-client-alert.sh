@@ -4,19 +4,22 @@
 set -euo pipefail
 
 COMPOSE_PROJECT="${COMPOSE_PROJECT:-chatbot}"
-INTERVAL_SEC="${INTERVAL_SEC:-2}"
-SUSTAINED_ROUNDS="${SUSTAINED_ROUNDS:-1}"
-COOLDOWN_SEC="${COOLDOWN_SEC:-45}"
+INTERVAL_SEC="${INTERVAL_SEC:-5}"
+SUSTAINED_ROUNDS="${SUSTAINED_ROUNDS:-2}"
+COOLDOWN_SEC="${COOLDOWN_SEC:-60}"
+LOG_LOOKBACK_SEC="${LOG_LOOKBACK_SEC:-8}"
 
 # CPU % thresholds (docker stats CPUPerc)
-OLLAMA_CPU_THRESHOLD="${OLLAMA_CPU_THRESHOLD:-5}"
-BACKEND_CPU_THRESHOLD="${BACKEND_CPU_THRESHOLD:-12}"
-COMBINED_CPU_THRESHOLD="${COMBINED_CPU_THRESHOLD:-8}"
+OLLAMA_CPU_THRESHOLD="${OLLAMA_CPU_THRESHOLD:-20}"
+BACKEND_CPU_THRESHOLD="${BACKEND_CPU_THRESHOLD:-35}"
+COMBINED_CPU_THRESHOLD="${COMBINED_CPU_THRESHOLD:-25}"
 
 HEARTBEAT_SEC="${HEARTBEAT_SEC:-300}"
 
 NOTIFY_TITLE="${NOTIFY_TITLE:-Portfolio Chatbot}"
 NOTIFY_BODY="${NOTIFY_BODY:-Possible visitor — chatbot is processing a request.}"
+
+HOT_DETAIL=""
 
 log() {
   printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
@@ -35,6 +38,21 @@ cpu_for() {
 
 float_ge() {
   awk -v a="$1" -v b="$2" 'BEGIN { exit (a + 0 >= b + 0) ? 0 : 1 }'
+}
+
+backend_container() {
+  docker ps --filter "name=${COMPOSE_PROJECT}-backend" --format '{{.Names}}' 2>/dev/null \
+    | head -1
+}
+
+recent_chat_request() {
+  local backend
+  backend="$(backend_container)"
+  [[ -z "$backend" ]] && return 1
+
+  docker logs --since "${LOG_LOOKBACK_SEC}s" "$backend" 2>&1 \
+    | grep -qE 'POST /api/chat' || return 1
+  return 0
 }
 
 play_alert_sound() {
@@ -92,6 +110,14 @@ is_hot() {
   local ollama_cpu=0 backend_cpu=0 combined=0
   local name cpu
 
+  HOT_DETAIL=""
+
+  if recent_chat_request; then
+    HOT_DETAIL="Visitor sent a chat message."
+    log "hot: POST /api/chat detected in backend logs"
+    return 0
+  fi
+
   while IFS= read -r name; do
     [[ -z "$name" ]] && continue
     cpu="$(cpu_for "$name")"
@@ -105,16 +131,19 @@ is_hot() {
   done < <(container_names)
 
   if float_ge "$ollama_cpu" "$OLLAMA_CPU_THRESHOLD"; then
+    HOT_DETAIL="Ollama CPU at ${ollama_cpu}%."
     log "hot: ollama CPU ${ollama_cpu}% (threshold ${OLLAMA_CPU_THRESHOLD}%)"
     return 0
   fi
 
   if float_ge "$backend_cpu" "$BACKEND_CPU_THRESHOLD"; then
+    HOT_DETAIL="Backend CPU at ${backend_cpu}%."
     log "hot: backend CPU ${backend_cpu}% (threshold ${BACKEND_CPU_THRESHOLD}%)"
     return 0
   fi
 
   if float_ge "$combined" "$COMBINED_CPU_THRESHOLD"; then
+    HOT_DETAIL="Combined chatbot CPU at ${combined}%."
     log "hot: combined CPU ${combined}% (threshold ${COMBINED_CPU_THRESHOLD}%)"
     return 0
   fi
@@ -145,7 +174,7 @@ main() {
   local hot_streak=0 last_alert=0 now last_heartbeat=0
 
   log "monitor started (runs forever at interval=${INTERVAL_SEC}s, cooldown=${COOLDOWN_SEC}s)"
-  log "thresholds: ollama>=${OLLAMA_CPU_THRESHOLD}% backend>=${BACKEND_CPU_THRESHOLD}% combined>=${COMBINED_CPU_THRESHOLD}%"
+  log "triggers: POST /api/chat logs + ollama>=${OLLAMA_CPU_THRESHOLD}% backend>=${BACKEND_CPU_THRESHOLD}% combined>=${COMBINED_CPU_THRESHOLD}%"
 
   while true; do
     now=$(date +%s)
@@ -155,7 +184,7 @@ main() {
 
       if (( hot_streak >= SUSTAINED_ROUNDS )); then
         if (( now - last_alert >= COOLDOWN_SEC )); then
-          trigger_alert "High CPU detected on chatbot containers."
+          trigger_alert "${HOT_DETAIL:-Chatbot activity detected.}"
           last_alert=$now
         else
           log "hot (alert suppressed — cooldown ${COOLDOWN_SEC}s)"
