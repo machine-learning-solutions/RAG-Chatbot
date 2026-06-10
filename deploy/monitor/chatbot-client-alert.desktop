@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Chatbot Client Alert Monitor
+Comment=Keep chatbot visitor alert monitor running after login
+Exec=/bin/systemctl --user start chatbot-client-alert.service
+Terminal=false
+Hidden=false
+X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Delay=10

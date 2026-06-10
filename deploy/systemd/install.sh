@@ -50,3 +50,7 @@ d = json.load(sys.stdin)
 for t in d.get('tunnels', []):
     print(' ', t.get('name','?'), '->', t.get('public_url','?'))
 " 2>/dev/null || echo "  (check http://localhost:4040)"
+
+echo ""
+echo "Installing client activity alerts (Ubuntu notification + sound)..."
+bash "$SCRIPT_DIR/../monitor/install.sh"

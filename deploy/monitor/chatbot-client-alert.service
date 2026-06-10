@@ -1,0 +1,19 @@
+[Unit]
+Description=Chatbot client activity alert (Docker CPU monitor)
+After=docker.service network-online.target
+Wants=docker.service network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Files/Software/Repositories/Applications/Chatbot
+ExecStart=%h/Files/Software/Repositories/Applications/Chatbot/deploy/monitor/chatbot-client-alert.sh
+Restart=always
+RestartSec=5
+
+# Desktop notifications + sound (Ubuntu session)
+Environment=DISPLAY=:0
+Environment=XDG_RUNTIME_DIR=/run/user/%U
+
+[Install]
+WantedBy=default.target
