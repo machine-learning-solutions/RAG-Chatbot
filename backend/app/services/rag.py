@@ -22,11 +22,7 @@ from app.services.language import (
     sanitize_arabic_answer,
     strip_empty_numbered_items,
 )
-from app.services.question_intent import (
-    NOT_FOUND_AR,
-    is_degraded_arabic_answer,
-    try_static_answer,
-)
+from app.services.question_intent import is_degraded_arabic_answer
 from app.services.reranker import Reranker
 from app.services.vector_store import VectorStoreManager
 
@@ -77,8 +73,7 @@ ARABIC_RAG_PROMPT = ChatPromptTemplate.from_messages(
             "والتحكم إلى بنود مرقّمة منفصلة (تشخيص، أنظمة الدفع، التحكم، اللوحات).\n"
             "17. عند السؤال عن المشاريع: اذكر كل مشروع أو منتج وارداً في قسم الخبرة "
             "(اسم المشروع/الشركة، الهدف، التقنيات) بترقيم عربي متسلسل؛ ابدأ كل بند "
-            "باسم المشروع أو الشركة كما في المصدر (مثل: ويفكس، نقيم، كوانتاليتكس، "
-            "أوليف، بلينكس، 4Tech، سي إس سي)؛ لا تخلط مع المهارات أو الشهادات أو "
+            "باسم المشروع أو الشركة كما في المصدر؛ لا تخلط مع المهارات أو الشهادات أو "
             "المقدمة العامة.\n"
         ),
         (
@@ -150,6 +145,9 @@ ENGLISH_RAG_PROMPT = ChatPromptTemplate.from_messages(
         ),
     ]
 )
+
+KB_NOT_FOUND_AR = "لا أستطيع العثور على إجابة في المعلومات المتوفرة."
+KB_NOT_FOUND_EN = "I cannot find an answer in the provided information."
 
 
 def _word_set(text: str) -> set[str]:
@@ -684,10 +682,6 @@ class GenerationService:
     ) -> str:
         lang = resolve_language(question, language)
 
-        static = try_static_answer(question, lang)
-        if static:
-            return static if lang != "ar" else sanitize_arabic_answer(static)
-
         max_chunks = (
             self.settings.portfolio_max_context_chunks
             if portfolio_fast
@@ -728,7 +722,7 @@ class GenerationService:
                 answer = await self._polish_arabic(answer, question, context)
             answer = sanitize_arabic_answer(answer)
             if is_degraded_arabic_answer(answer):
-                answer = sanitize_arabic_answer(NOT_FOUND_AR)
+                answer = KB_NOT_FOUND_AR
         elif answer:
             answer = strip_empty_numbered_items(normalize_phone_numbers(answer))
         return answer
