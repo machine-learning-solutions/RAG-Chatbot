@@ -36,7 +36,7 @@ services:
       - key: EMBEDDING_MODEL
         value: intfloat/multilingual-e5-large
       - key: LLM_TEMPERATURE
-        value: "0"
+        value: "0.9"
       - key: VECTOR_STORE_PATH
         value: /app/data/vector_store
       - key: UPLOAD_DIR

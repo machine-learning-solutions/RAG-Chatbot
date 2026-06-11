@@ -63,7 +63,7 @@ services:
       OLLAMA_BASE_URL: http://ollama:11434
       OLLAMA_MODEL: gemma4:e2b
       EMBEDDING_MODEL: intfloat/multilingual-e5-large
-      LLM_TEMPERATURE: "0.1"
+      LLM_TEMPERATURE: "0.9"
       VECTOR_STORE_PATH: /app/data/vector_store
       UPLOAD_DIR: /app/data/uploads
       CHUNK_SIZE: "512"
