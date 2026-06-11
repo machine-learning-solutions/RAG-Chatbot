@@ -358,8 +358,13 @@ def strip_empty_numbered_items(text: str) -> str:
     return "\n".join(lines).rstrip()
 
 
-def sanitize_arabic_answer(text: str) -> str:
-    """Minimal post-processing: script cleanup only, no phrase-specific rules."""
+def sanitize_arabic_answer(text: str, *, light: bool = False) -> str:
+    """Post-process Arabic answers. Use light=True for long numbered lists."""
+    if light:
+        cleaned = strip_empty_numbered_items(text)
+        cleaned = _normalize_whitespace(cleaned)
+        return normalize_phone_numbers(cleaned)
+
     masked, token_store = _mask_contact_tokens(text)
     cleaned = _strip_disallowed_scripts(masked)
     cleaned = _strip_latin_parentheticals(cleaned)

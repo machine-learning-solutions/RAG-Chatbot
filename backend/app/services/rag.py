@@ -688,10 +688,14 @@ class GenerationService:
             if portfolio_fast
             else self.settings.max_context_chunks
         )
+        is_certs_list = bool(
+            portfolio_fast
+            and re.search(r"شهاد|ترخيص|certif|license", question, re.IGNORECASE)
+        )
         is_projects_list = bool(
             portfolio_fast and PROJECTS_QUESTION_RE.search(question)
         )
-        if is_projects_list:
+        if is_certs_list or is_projects_list:
             merged = deduplicate_by_content_prefix(chunks)
             all_distinct = prioritize_section_chunks(merged, question)[:max_chunks]
         else:
@@ -721,7 +725,7 @@ class GenerationService:
                 needs_arabic_polish(answer) or is_degraded_arabic_answer(answer)
             ):
                 answer = await self._polish_arabic(answer, question, context)
-            answer = sanitize_arabic_answer(answer)
+            answer = sanitize_arabic_answer(answer, light=is_list_question)
             if is_degraded_arabic_answer(answer):
                 answer = KB_NOT_FOUND_AR
         elif answer:
