@@ -90,9 +90,12 @@ async def delete_document(
 
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+async def chat(
+    request: ChatRequest,
+    session: AsyncSession = Depends(get_session),
+):
     service = ChatService()
     try:
-        return await service.chat(request)
+        return await service.chat(request, session=session)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Chat failed: {exc}") from exc

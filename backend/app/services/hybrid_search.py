@@ -27,51 +27,39 @@ def resolve_language(question: str, language: str | None = None) -> str:
     return "ar" if is_arabic_question(question) else "en"
 
 
-# Arabic questions against English resumes need extra English keywords for BM25/vectors.
-_ARABIC_RETRIEVAL_HINTS: list[tuple[re.Pattern[str], str]] = [
-    (
-        re.compile(
-            r"شهاد|ترخيص|certif|license|آخر\s*\d|أحدث|latest",
-            re.IGNORECASE,
-        ),
-        "Licenses Certifications Purple March 2025",
-    ),
-    (
-        re.compile(
-            r"أشباه\s*الموصلات|موصلات|VLSI|ASIC|CMOS|"
-            r"تحقق\s*من\s*التصميم|semiconductor|synopsys|Synopsis",
-            re.IGNORECASE,
-        ),
-        "Purple Certification VLSI ASIC CMOS Design Verification "
-        "SystemVerilog UVM semiconductor Synopsis",
-    ),
-    (
-        re.compile(r"Quantalytics|كوانت|فوربس|Forbes", re.IGNORECASE),
-        "Quantalytics Forbes React Native Redux Optimum Partners",
-    ),
-    (
-        re.compile(r"JoPath|WeFix|وي\s*فiks|جو\s*بath", re.IGNORECASE),
-        "JoPath WeFix microservices Flutter GraphQL",
-    ),
-    (
-        re.compile(
-            r"إنترنت\s*الأشياء|iot|internet\s*of\s*things|أتمتة|تحكم|plc|scada|vfd",
-            re.IGNORECASE,
-        ),
-        "IoT industrial automation control systems PLC SCADA VFD electrical",
-    ),
-]
+def _chunk_key(doc: Document) -> str:
+    return doc.id or str(hash(doc.page_content[:100]))
 
 
-def expand_retrieval_query(query: str) -> str:
-    """Append English domain terms when an Arabic question implies them."""
-    extras: list[str] = []
-    for pattern, terms in _ARABIC_RETRIEVAL_HINTS:
-        if pattern.search(query):
-            extras.append(terms)
-    if not extras:
-        return query
-    return f"{query} {' '.join(extras)}"
+def reciprocal_rank_fusion(
+    ranked_lists: list[list[tuple[Document, float]]],
+    k: int,
+    rrf_constant: int = 60,
+) -> list[tuple[Document, float]]:
+    """Fuse multiple ranked lists with reciprocal rank fusion (scale-invariant)."""
+    if not ranked_lists:
+        return []
+
+    scores: dict[str, float] = {}
+    docs: dict[str, Document] = {}
+
+    for ranked in ranked_lists:
+        for rank, (doc, _) in enumerate(ranked, start=1):
+            key = _chunk_key(doc)
+            docs[key] = doc
+            scores[key] = scores.get(key, 0.0) + 1.0 / (rrf_constant + rank)
+
+    fused = sorted(scores.items(), key=lambda item: item[1], reverse=True)
+    return [(docs[key], score) for key, score in fused[:k]]
+
+
+def merge_hybrid_results(
+    vector_results: list[tuple[Document, float]],
+    bm25_results: list[tuple[Document, float]],
+    k: int,
+    rrf_constant: int = 60,
+) -> list[tuple[Document, float]]:
+    return reciprocal_rank_fusion([vector_results, bm25_results], k, rrf_constant)
 
 
 @dataclass
@@ -84,7 +72,7 @@ class ChunkRecord:
 
 
 def _tokenize(text: str) -> list[str]:
-    return text.lower().split()
+    return [token for token in re.findall(r"\w+", text.lower()) if len(token) > 1]
 
 
 def _to_document(record: ChunkRecord) -> Document:
@@ -106,8 +94,13 @@ class BM25Retriever:
 
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
+        self._records_cache: list[ChunkRecord] | None = None
+        self._cache_document_id: str | None = None
 
     async def _load_records(self, document_id: str | None = None) -> list[ChunkRecord]:
+        if self._records_cache is not None and self._cache_document_id == document_id:
+            return self._records_cache
+
         stmt = (
             select(
                 Chunk.id,
@@ -124,7 +117,7 @@ class BM25Retriever:
         async with async_session_factory() as session:
             rows = (await session.execute(stmt)).all()
 
-        return [
+        records = [
             ChunkRecord(
                 chunk_id=row.id,
                 document_id=row.document_id,
@@ -134,6 +127,13 @@ class BM25Retriever:
             )
             for row in rows
         ]
+        self._records_cache = records
+        self._cache_document_id = document_id
+        return records
+
+    def invalidate_cache(self) -> None:
+        self._records_cache = None
+        self._cache_document_id = None
 
     async def search(
         self,
@@ -161,22 +161,3 @@ class BM25Retriever:
                 continue
             results.append((_to_document(records[idx]), float(scores[idx])))
         return results
-
-
-def merge_hybrid_results(
-    vector_results: list[tuple[Document, float]],
-    bm25_results: list[tuple[Document, float]],
-    k: int,
-) -> list[tuple[Document, float]]:
-    combined: dict[str, tuple[Document, float]] = {}
-
-    for doc, score in vector_results + bm25_results:
-        key = doc.id or str(hash(doc.page_content[:100]))
-        if key not in combined:
-            combined[key] = (doc, score)
-        else:
-            existing_doc, existing_score = combined[key]
-            combined[key] = (existing_doc, max(existing_score, score))
-
-    ranked = sorted(combined.values(), key=lambda item: item[1], reverse=True)
-    return ranked[:k]

@@ -6,7 +6,9 @@ from langchain_ollama import ChatOllama
 
 from app.config import Settings
 from app.models.schemas import SourceChunk
-from app.services.hybrid_search import BM25Retriever, expand_retrieval_query, merge_hybrid_results
+from app.services.context_filter import apply_context_filters
+from app.services.hybrid_search import BM25Retriever, reciprocal_rank_fusion
+from app.services.query_expansion import QueryExpander, has_latin_tokens
 from app.services.language import (
     needs_arabic_polish,
     normalize_phone_numbers,
@@ -46,19 +48,17 @@ ARABIC_RAG_PROMPT = ChatPromptTemplate.from_messages(
             "(ممنوع: «باستخدام، و، و» أو «مثل و و»).\n"
             "9. اكتب أرقام الهاتف بالتنسيق الدولي مع + في البداية "
             "(مثل: +962 77 700 2130) ولا تعكس ترتيب الأرقام.\n"
-            "10. إن لم تجد المعلومة المطلوبة في المصادر، أجب بإيجاز أنها غير متوفرة "
-            "ولا تسرد خبرات أو مشاريع غير مرتبطة. لا تخمّن ولا تستنتج.\n"
-            "11. عند ذكر الشهادات: اكتب اسم كل شهادة كاملاً بالعربية ثم التاريخ "
+            "10. أجب مباشرة من المصادر دون شرح خطوات البحث أو التحليل أو الاستنتاج. "
+            "إذا وُجدت الإجابة في المصادر فلا تقل إنها غير متوفرة.\n"
+            "11. استخدم فقط المقاطع المرتبطة بالسؤال؛ لا تخلط بين أقسام أو جهات مختلفة "
+            "إذا كان السؤال محدداً بجهة أو موضوع معيّن.\n"
+            "12. إن لم تجد المعلومة في المصادر المقدمة فقط، قل بوضوح أنها غير متوفرة "
+            "ولا تخمّن.\n"
+            "13. عند ذكر الشهادات: اكتب اسم كل شهادة كاملاً بالعربية ثم التاريخ "
             "(مثل: شهادة البنفسجي في التحقق من التصميم باستخدام يو في إم - مارس 2025). "
             "لا تكتب التاريخ وحده.\n"
-            "12. شهادات Purple وVLSI وASIC وCMOS وSystemVerilog وDesign Verification "
-            "تخص مجال أشباه الموصلات والتحقق من التصميم.\n"
-            "13. عند السؤال عن «آخر شهادة» (مفرد) اذكر الأحدث زمنياً فقط؛ "
-            "وعند «آخر 5» اذكر خمساً مرتبة من الأحدث للأقدم.\n"
             "14. «كم بده/بكم/السعر/التكلفة» تعني التسعير والأتعاب وليس عدد المشاريع.\n"
-            "15. إن سُئل عن التسعير أو عدد المشاريع ولم يُذكر في المصادر، "
-            "قل بوضوح أن السيرة لا تتضمن هذه المعلومة واقترح التواصل عبر البريد أو الهاتف.\n"
-            "16. عند استخدام قائمة مرقّمة أكمِل كل بند بجملة أو جملتين؛ "
+            "15. عند استخدام قائمة مرقّمة أكمِل كل بند بجملة أو جملتين؛ "
             "لا تبدأ بنداً دون إنهائه ولا تتوقف في منتصف القائمة.",
         ),
         (
@@ -110,7 +110,10 @@ ENGLISH_RAG_PROMPT = ChatPromptTemplate.from_messages(
             "4. If the information is partial, clearly state what is available.\n"
             "5. Provide ONE consolidated answer only. Do not repeat the same "
             "information in different wording.\n"
-            "6. Only if you cannot find any relevant information, say: "
+            "6. Answer directly from the sources. Do not describe your search process.\n"
+            "7. If the answer is present in the sources, do not claim it is missing.\n"
+            "8. Use only passages relevant to the question; do not mix unrelated sections.\n"
+            "9. Only if the provided sources contain no relevant information, say: "
             '"I cannot find an answer in the provided information."',
         ),
         (
@@ -185,11 +188,13 @@ class RetrievalService:
         settings: Settings,
         reranker: Reranker | None = None,
         bm25: BM25Retriever | None = None,
+        expander: QueryExpander | None = None,
     ) -> None:
         self.vector_manager = vector_manager
         self.settings = settings
         self.reranker = reranker
         self.bm25 = bm25 or BM25Retriever(settings)
+        self.expander = expander or QueryExpander(settings)
 
     async def retrieve(
         self,
@@ -201,7 +206,6 @@ class RetrievalService:
     ) -> list[tuple[Document, float]]:
         k = top_k or self.settings.top_k
         retrieval_k = max(k, self.settings.retrieval_min_k)
-        search_query = expand_retrieval_query(query)
 
         should_rerank = (
             use_reranker
@@ -214,25 +218,46 @@ class RetrievalService:
             else self.settings.hybrid_search_enabled
         )
 
-        fetch_k = retrieval_k * 3 if should_rerank and self.reranker else retrieval_k
+        fetch_k = (
+            retrieval_k * self.settings.retrieval_fetch_multiplier
+            if should_rerank and self.reranker
+            else retrieval_k * 2
+        )
+
+        # Stage 1: multi-query expansion + hybrid retrieval + RRF fusion
+        search_queries = await self.expander.expand(query)
+        ranked_lists: list[list[tuple[Document, float]]] = []
+
+        for search_query in search_queries:
+            ranked_lists.append(
+                self.vector_manager.search(
+                    search_query, k=fetch_k, document_id=document_id
+                )
+            )
 
         if should_hybrid:
-            vector_results = self.vector_manager.search(
-                search_query, k=fetch_k, document_id=document_id
-            )
-            bm25_results = await self.bm25.search(
-                search_query, k=fetch_k, document_id=document_id
-            )
-            results = merge_hybrid_results(vector_results, bm25_results, fetch_k)
+            for bm25_query in self.expander.lexical_queries(search_queries):
+                bm25_results = await self.bm25.search(
+                    bm25_query, k=fetch_k, document_id=document_id
+                )
+                if bm25_results:
+                    ranked_lists.append(bm25_results)
+
+        if len(ranked_lists) == 1:
+            candidates = ranked_lists[0][:fetch_k]
         else:
-            results = self.vector_manager.search(
-                search_query, k=fetch_k, document_id=document_id
+            candidates = reciprocal_rank_fusion(
+                ranked_lists, fetch_k, self.settings.rrf_k
             )
 
-        if should_rerank and self.reranker and results:
-            return self.reranker.rerank(query, results, k)
+        # Stage 2: cross-encoder reranking on candidate pool
+        if should_rerank and self.reranker and candidates:
+            ranked = self.reranker.rerank(query, candidates, k)
+        else:
+            ranked = candidates[:k]
 
-        return results[:k]
+        # Stage 3: relevance filtering before generation
+        return apply_context_filters(ranked, self.settings)
 
 
 class GenerationService:
@@ -313,8 +338,7 @@ class GenerationService:
             return static if lang != "ar" else sanitize_arabic_answer(static)
 
         all_distinct = deduplicate_chunks(chunks)
-        distinct_chunks = all_distinct[: self.settings.max_context_chunks]
-        context = self.build_context(distinct_chunks, language=lang)
+        context = self.build_context(all_distinct, language=lang)
 
         if lang == "ar":
             structured = format_certifications_answer(question, all_distinct)

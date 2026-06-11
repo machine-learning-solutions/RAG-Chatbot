@@ -70,7 +70,7 @@ def api_delete(path: str) -> dict[str, Any]:
 
 def init_portfolio_defaults() -> None:
     st.session_state.setdefault("top_k", 5)
-    st.session_state.setdefault("use_reranker", False)
+    st.session_state.setdefault("use_reranker", True)
     st.session_state.setdefault("use_hybrid", True)
     st.session_state.setdefault("document_id", None)
 
@@ -151,7 +151,7 @@ def render_chat() -> None:
                         "language": st.session_state.language,
                         "document_id": st.session_state.get("document_id"),
                         "top_k": st.session_state.get("top_k", 5),
-                        "use_reranker": st.session_state.get("use_reranker", False),
+                        "use_reranker": st.session_state.get("use_reranker", True),
                         "use_hybrid": st.session_state.get("use_hybrid", True),
                     }
                     result = api_post("/api/chat", json=payload)
@@ -267,7 +267,7 @@ def render_sidebar() -> str | None:
 
     st.sidebar.divider()
     top_k = st.sidebar.slider(t(lang, "top_k"), 1, 15, 5)
-    use_reranker = st.sidebar.checkbox(t(lang, "reranker"), value=False)
+    use_reranker = st.sidebar.checkbox(t(lang, "reranker"), value=True)
     use_hybrid = st.sidebar.checkbox(t(lang, "hybrid"), value=True)
 
     st.session_state["top_k"] = top_k

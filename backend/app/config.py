@@ -22,11 +22,17 @@ class Settings(BaseSettings):
     chunk_size: int = 512
     chunk_overlap: int = 64
     turbovec_bit_width: int = 4
-    reranker_enabled: bool = False
+    reranker_enabled: bool = True
     reranker_model: str = "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
     hybrid_search_enabled: bool = True
+    query_expansion_enabled: bool = True
+    multi_query_count: int = 3
     top_k: int = 5
-    retrieval_min_k: int = 5
+    retrieval_min_k: int = 10
+    retrieval_fetch_multiplier: int = 4
+    rrf_k: int = 60
+    reranker_min_score: float = -0.5
+    context_score_margin: float = 1.5
     torch_device: str = "cuda"
 
     @field_validator("database_url", mode="before")

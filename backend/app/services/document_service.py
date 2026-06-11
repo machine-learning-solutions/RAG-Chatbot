@@ -10,9 +10,12 @@ from app.models.schemas import ChatRequest, ChatResponse, IngestResponse
 from app.services.database import Chunk, Document
 from app.services.ingestion import SUPPORTED_EXTENSIONS, load_document, split_documents
 from app.services.language import resolve_language
+from app.services.hybrid_search import BM25Retriever
 from app.services.rag import GenerationService, RetrievalService
 from app.services.reranker import get_reranker
 from app.services.vector_store import get_vector_store_manager
+
+_bm25_retriever = BM25Retriever()
 
 
 class DocumentService:
@@ -24,6 +27,15 @@ class DocumentService:
     @property
     def vector_manager(self):
         return get_vector_store_manager()
+
+    async def _remove_by_filename(
+        self, session: AsyncSession, filename: str
+    ) -> None:
+        result = await session.execute(
+            select(Document).where(Document.filename == filename)
+        )
+        for existing in result.scalars().all():
+            await self.delete_document(session, existing.id)
 
     async def ingest_file(
         self,
@@ -37,6 +49,8 @@ class DocumentService:
                 f"Unsupported file type '{suffix}'. "
                 f"Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}"
             )
+
+        await self._remove_by_filename(session, filename)
 
         document_id = str(uuid.uuid4())
         safe_name = f"{document_id}{suffix}"
@@ -72,6 +86,7 @@ class DocumentService:
             )
 
         await session.commit()
+        _bm25_retriever.invalidate_cache()
 
         return IngestResponse(
             document_id=document_id,
@@ -108,6 +123,7 @@ class DocumentService:
 
         await session.execute(delete(Document).where(Document.id == document_id))
         await session.commit()
+        _bm25_retriever.invalidate_cache()
         return True
 
 
@@ -117,7 +133,24 @@ class ChatService:
         self.vector_manager = get_vector_store_manager()
         self.generation = GenerationService(self.settings)
 
-    async def chat(self, request: ChatRequest) -> ChatResponse:
+    async def _resolve_document_id(
+        self,
+        session: AsyncSession,
+        document_id: str | None,
+    ) -> str | None:
+        if document_id:
+            return document_id
+        docs = await DocumentService(self.settings).list_documents(session)
+        if not docs:
+            return None
+        if len(docs) == 1:
+            return docs[0].id
+        # Prefer the newest upload when multiple documents exist.
+        return docs[0].id
+
+    async def chat(
+        self, request: ChatRequest, session: AsyncSession | None = None
+    ) -> ChatResponse:
         use_rerank = (
             request.use_reranker
             if request.use_reranker is not None
@@ -125,12 +158,21 @@ class ChatService:
         )
         reranker = get_reranker() if use_rerank else None
         retrieval = RetrievalService(
-            self.vector_manager, self.settings, reranker
+            self.vector_manager,
+            self.settings,
+            reranker,
+            bm25=_bm25_retriever,
         )
+        scoped_document_id = request.document_id
+        if session is not None:
+            scoped_document_id = await self._resolve_document_id(
+                session, request.document_id
+            )
+
         chunks = await retrieval.retrieve(
             query=request.question,
             top_k=request.top_k,
-            document_id=request.document_id,
+            document_id=scoped_document_id,
             use_reranker=request.use_reranker,
             use_hybrid=request.use_hybrid,
         )

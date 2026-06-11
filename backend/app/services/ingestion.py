@@ -4,7 +4,10 @@ from pathlib import Path
 
 from langchain_community.document_loaders import Docx2txtLoader, PyPDFLoader
 from langchain_core.documents import Document
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_text_splitters import (
+    MarkdownHeaderTextSplitter,
+    RecursiveCharacterTextSplitter,
+)
 from transformers import AutoTokenizer
 
 from app.config import Settings
@@ -68,6 +71,24 @@ def load_document(file_path: Path) -> list[Document]:
     raise ValueError(f"Unsupported file type: {suffix}")
 
 
+def _pre_split_markdown(documents: list[Document], filename: str) -> list[Document]:
+    if Path(filename).suffix.lower() != ".md":
+        return documents
+
+    header_splitter = MarkdownHeaderTextSplitter(
+        headers_to_split_on=[
+            ("#", "section"),
+            ("##", "section"),
+            ("###", "section"),
+        ],
+        strip_headers=False,
+    )
+    sectioned: list[Document] = []
+    for doc in documents:
+        sectioned.extend(header_splitter.split_text(doc.page_content))
+    return sectioned or documents
+
+
 def split_documents(
     documents: list[Document],
     settings: Settings,
@@ -81,13 +102,18 @@ def split_documents(
         chunk_overlap=settings.chunk_overlap,
     )
 
-    chunks = splitter.split_documents(documents)
+    source_docs = _pre_split_markdown(documents, filename)
+    chunks = splitter.split_documents(source_docs)
     enriched: list[Document] = []
 
     for index, chunk in enumerate(chunks):
         page = chunk.metadata.get("page")
         if page is not None:
             page = int(page) + 1
+
+        section = chunk.metadata.get("section")
+        if section and section not in chunk.page_content[:200]:
+            chunk.page_content = f"{section}\n\n{chunk.page_content}"
 
         chunk_id = str(uuid.uuid4())
         chunk.metadata.update(
@@ -97,6 +123,7 @@ def split_documents(
                 "chunk_index": index,
                 "page": page,
                 "source": filename,
+                "section": section,
             }
         )
         chunk.id = chunk_id
