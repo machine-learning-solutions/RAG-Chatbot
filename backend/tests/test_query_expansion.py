@@ -4,6 +4,7 @@ from app.config import Settings
 from app.services.query_expansion import (
     QueryExpander,
     extract_named_app_search_term,
+    is_contact_question,
     is_plural_app_role_question,
     is_single_app_role_question,
     resolve_portfolio_intent_search_query,
@@ -57,6 +58,20 @@ def test_single_app_role_intent():
     assert extract_named_app_search_term(q) == "Nuqayyem"
     assert "Nuqayyem" in resolve_portfolio_intent_search_query(q)
     assert portfolio_num_predict(Settings(), q) == 1024
+
+
+def test_contact_collaboration_intent():
+    q = "اريد التواصل مع جهاد من اجل مشروع"
+    assert is_contact_question(q)
+    assert not is_experience_list_question(q)
+    assert "Contact" in resolve_portfolio_intent_search_query(q)
+    assert "WeFix" not in resolve_portfolio_intent_search_query(q)
+
+
+def test_contact_phone_intent():
+    q = "اريد رقم للتواصل"
+    assert is_contact_question(q)
+    assert "outlook" in resolve_portfolio_intent_search_query(q).lower()
 
 
 def test_single_app_role_expand_two_queries():

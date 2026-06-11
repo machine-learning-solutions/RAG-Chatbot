@@ -22,6 +22,7 @@ from app.services.query_expansion import (
     SKILLS_INTENT_RE,
     extract_named_app_search_term,
     has_latin_tokens,
+    is_contact_question,
     is_plural_app_role_question,
     is_single_app_role_question,
 )
@@ -126,6 +127,45 @@ SINGLE_APP_ROLE_ARABIC_PROMPT = ChatPromptTemplate.from_messages(
             "**المعلومات من قاعدة المعرفة:**\n{context}\n\n"
             "**السؤال:**\n{question}\n\n"
             "**الإجابة (فقرات تفصيلية دون ترقيم):**",
+        ),
+    ]
+)
+
+CONTACT_ARABIC_PROMPT = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            "أنت مساعد يجيب بالعربية الفصحى من معلومات قاعدة المعرفة.\n\n"
+            "السؤال عن التواصل مع جهاد (مشروع، تعاون، توظيف، أو طلب رقم/بريد).\n\n"
+            "أجب بفقرة أو فقرتين واضحتين (بدون قائمة مرقّمة) وتضمّن من المصادر:\n"
+            "- البريد الإلكتروني كاملاً\n"
+            "- رقم الهاتف بصيغة +962\n"
+            "- رابط LinkedIn وGitHub والموقع الشخصي إن وُجدت\n\n"
+            "إذا سُئل عن التواصل بخصوص مشروع: اذكر وسائل التواصل أعلاه وادعُ "
+            "للمراسلة لوصف المشروع. لا تسرد وظائفه أو خبراته السابقة ولا "
+            "تقترح التواصل عبر أماكن عمله السابقة.\n"
+            "إذا سُئل عن الرقم أو البريد فقط: أجب مباشرة بالمعلومة المطلوبة.",
+        ),
+        (
+            "human",
+            "**المعلومات من قاعدة المعرفة:**\n{context}\n\n"
+            "**السؤال:**\n{question}\n\n"
+            "**الإجابة:**",
+        ),
+    ]
+)
+
+CONTACT_ENGLISH_PROMPT = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            "Answer from the knowledge base with Jehad's contact details: email, "
+            "phone (+962), LinkedIn, GitHub, website. For project inquiries, give "
+            "contact info and invite them to email—do not list past job roles.",
+        ),
+        (
+            "human",
+            "**Knowledge base:**\n{context}\n\n**Question:**\n{question}\n\n**Answer:**",
         ),
     ]
 )
@@ -304,12 +344,38 @@ LIST_QUESTION_RE = re.compile(
 
 
 def is_experience_list_question(question: str) -> bool:
-    if is_single_app_role_question(question):
+    if is_single_app_role_question(question) or is_contact_question(question):
         return False
     return bool(
         PROJECTS_QUESTION_RE.search(question)
         or is_plural_app_role_question(question)
     )
+
+
+CONTACT_SECTION_HINTS = (
+    "@",
+    "+962",
+    "linkedin.com",
+    "outlook.com",
+    "jehadabuawwad.com",
+    "github.com",
+)
+
+
+def is_contact_section_chunk(content: str) -> bool:
+    lowered = content.lower()
+    return any(hint in lowered for hint in CONTACT_SECTION_HINTS)
+
+
+def prioritize_contact_chunks(
+    chunks: list[tuple[Document, float]],
+) -> list[tuple[Document, float]]:
+    contact = [
+        item for item in chunks if is_contact_section_chunk(item[0].page_content)
+    ]
+    if contact:
+        return contact
+    return chunks
 
 
 def prioritize_chunks_for_named_app(
@@ -889,6 +955,7 @@ class GenerationService:
             portfolio_fast
             and re.search(r"شهاد|ترخيص|certif|license", question, re.IGNORECASE)
         )
+        is_contact = bool(portfolio_fast and is_contact_question(question))
         is_single_app = bool(portfolio_fast and is_single_app_role_question(question))
         is_plural_app_role = bool(
             portfolio_fast and is_plural_app_role_question(question)
@@ -896,7 +963,10 @@ class GenerationService:
         is_experience_list = bool(
             portfolio_fast and is_experience_list_question(question)
         )
-        if is_single_app:
+        if is_contact:
+            merged = deduplicate_by_content_prefix(chunks)
+            all_distinct = prioritize_contact_chunks(merged)[:3]
+        elif is_single_app:
             merged = deduplicate_by_content_prefix(chunks)
             all_distinct = prioritize_chunks_for_named_app(merged, question)[:3]
         elif is_certs_list or is_experience_list:
@@ -911,14 +981,26 @@ class GenerationService:
             language=lang,
             portfolio_fast=portfolio_fast,
             chunk_max_chars=(
-                2500
-                if is_single_app
-                else (900 if is_plural_app_role else (1100 if is_experience_list else None))
+                1500
+                if is_contact
+                else (
+                    2500
+                    if is_single_app
+                    else (
+                        900
+                        if is_plural_app_role
+                        else (1100 if is_experience_list else None)
+                    )
+                )
             ),
             total_max_chars=(
-                5500
-                if is_single_app
-                else (8500 if is_experience_list else None)
+                3000
+                if is_contact
+                else (
+                    5500
+                    if is_single_app
+                    else (8500 if is_experience_list else None)
+                )
             ),
             compact_chunks=is_experience_list and not is_plural_app_role,
             app_role_compact=is_plural_app_role,
@@ -929,7 +1011,11 @@ class GenerationService:
             if portfolio_fast
             else self.llm
         )
-        if is_single_app and lang == "ar":
+        if is_contact and lang == "ar":
+            prompt = CONTACT_ARABIC_PROMPT
+        elif is_contact:
+            prompt = CONTACT_ENGLISH_PROMPT
+        elif is_single_app and lang == "ar":
             prompt = SINGLE_APP_ROLE_ARABIC_PROMPT
         elif is_single_app:
             prompt = SINGLE_APP_ROLE_ENGLISH_PROMPT
@@ -941,6 +1027,7 @@ class GenerationService:
         is_list_question = bool(
             LIST_QUESTION_RE.search(question)
             and not is_single_app_role_question(question)
+            and not is_contact_question(question)
         )
         answer = strip_empty_numbered_items(
             raw_answer if is_list_question else deduplicate_answer(raw_answer)
@@ -951,7 +1038,7 @@ class GenerationService:
             ):
                 answer = await self._polish_arabic(answer, question, context)
             answer = sanitize_arabic_answer(
-                answer, light=is_list_question or is_single_app
+                answer, light=is_list_question or is_single_app or is_contact
             )
             if is_degraded_arabic_answer(answer):
                 answer = KB_NOT_FOUND_AR

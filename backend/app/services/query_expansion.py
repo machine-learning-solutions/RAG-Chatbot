@@ -47,6 +47,19 @@ EXPERIENCE_INTENT_RE = re.compile(r"خبرة|experience|عمل", re.IGNORECASE)
 CONTACT_INTENT_RE = re.compile(
     r"تواصل|contact|email|phone|هاتف|بريد|linkedin", re.IGNORECASE
 )
+CONTACT_INFO_RE = re.compile(
+    r"رقم|هاتف|بريد|إيميل|email|phone|linkedin|github|"
+    r"كيف\s+أتواصل|معلومات\s+التواصل|وسيلة\s+التواصل|@",
+    re.IGNORECASE,
+)
+CONTACT_COLLABORATION_RE = re.compile(
+    r"(?=.*(?:تواصل|contact|reach|hire|راسل|كلمني))"
+    r"(?=.*(?:مشروع|project|تعاون|collaborat))",
+    re.IGNORECASE | re.DOTALL,
+)
+CONTACT_SEARCH_QUERY = (
+    "Contact email phone LinkedIn jehadabuawwad@outlook.com +962 77 700 2130"
+)
 
 # Deterministic English retrieval queries when portfolio intent is known (no LLM).
 PORTFOLIO_INTENT_SEARCH: list[tuple[re.Pattern[str], str]] = [
@@ -58,7 +71,6 @@ PORTFOLIO_INTENT_SEARCH: list[tuple[re.Pattern[str], str]] = [
     ),
     (EDUCATION_INTENT_RE, "Education"),
     (EXPERIENCE_INTENT_RE, "EXPERIENCE"),
-    (CONTACT_INTENT_RE, "Contact LinkedIn email phone"),
 ]
 
 ENGLISH_SEARCH_PROMPT = ChatPromptTemplate.from_messages(
@@ -128,6 +140,19 @@ def is_single_app_role_question(question: str) -> bool:
     return extract_named_app_search_term(question) is not None
 
 
+def is_contact_question(question: str) -> bool:
+    """Reach Jehad for hiring/collaboration or ask for contact details."""
+    if CONTACT_INFO_RE.search(question):
+        return True
+    if CONTACT_COLLABORATION_RE.search(question):
+        return True
+    if re.search(r"تواصل|contact", question, re.IGNORECASE):
+        if ROLE_INTENT_RE.search(question):
+            return False
+        return True
+    return False
+
+
 def is_plural_app_role_question(question: str) -> bool:
     """Role question across multiple applications (numbered list answer)."""
     if not ROLE_INTENT_RE.search(question):
@@ -140,6 +165,8 @@ def is_plural_app_role_question(question: str) -> bool:
 
 def resolve_portfolio_intent_search_query(question: str) -> str | None:
     """Return a deterministic English search query when question intent is known."""
+    if is_contact_question(question):
+        return CONTACT_SEARCH_QUERY
     if is_single_app_role_question(question):
         term = extract_named_app_search_term(question)
         if term:
