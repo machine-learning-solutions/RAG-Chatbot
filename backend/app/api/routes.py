@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.schemas import (
@@ -15,6 +16,7 @@ from app.services.document_service import (
     DocumentService,
     check_ollama_health,
 )
+from app.services.chat_stream import stream_chat_sse
 from app.services.vector_store import get_vector_store_manager, vector_store_stats
 from app.config import get_settings
 
@@ -92,10 +94,29 @@ async def delete_document(
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     request: ChatRequest,
+    http_request: Request,
     session: AsyncSession = Depends(get_session),
 ):
     service = ChatService()
+    portfolio_fast = request.portfolio_fast or "PortfolioChat" in (
+        http_request.headers.get("user-agent", "")
+    )
+    wants_stream = request.stream or "text/event-stream" in (
+        http_request.headers.get("accept", "").lower()
+    )
     try:
-        return await service.chat(request, session=session)
+        if wants_stream:
+            return StreamingResponse(
+                stream_chat_sse(request, session, portfolio_fast),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
+            )
+        return await service.chat(
+            request, session=session, portfolio_fast=portfolio_fast
+        )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Chat failed: {exc}") from exc

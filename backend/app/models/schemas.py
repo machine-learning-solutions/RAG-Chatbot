@@ -40,6 +40,14 @@ class ChatRequest(BaseModel):
         default=None,
         description="TurboVec + BM25 hybrid search (OLD pipeline, without FAISS)",
     )
+    portfolio_fast: bool = Field(
+        default=False,
+        description="Low-latency profile for public portfolio embeds",
+    )
+    stream: bool = Field(
+        default=False,
+        description="Stream SSE pings while processing (for Netlify/proxy timeouts)",
+    )
 
 
 class SourceChunk(BaseModel):

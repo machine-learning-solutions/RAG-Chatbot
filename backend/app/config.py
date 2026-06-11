@@ -25,7 +25,9 @@ class Settings(BaseSettings):
     reranker_enabled: bool = True
     reranker_model: str = "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
     hybrid_search_enabled: bool = True
-    query_expansion_enabled: bool = True
+    # Optional RAG-Fusion LLM expansion (adds latency; off in production Docker).
+    query_expansion_enabled: bool = False
+    query_expansion_timeout_seconds: float = 10.0
     multi_query_count: int = 3
     top_k: int = 5
     retrieval_min_k: int = 10
@@ -33,6 +35,13 @@ class Settings(BaseSettings):
     rrf_k: int = 60
     reranker_min_score: float = -0.5
     context_score_margin: float = 1.5
+    portfolio_llm_num_predict: int = 512
+    portfolio_max_context_chunks: int = 4
+    portfolio_context_chunk_max_chars: int = 1800
+    portfolio_top_k: int = 5
+    portfolio_retrieval_min_k: int = 8
+    portfolio_retrieval_fetch_multiplier: int = 2
+    portfolio_reranker_enabled: bool = True
     torch_device: str = "cuda"
 
     @field_validator("database_url", mode="before")

@@ -44,6 +44,16 @@
   path = "/chat/*"
   function = "chat-proxy"
 
+[[edge_functions]]
+  path = "/rag-api/*"
+  function = "api-proxy"
+
 Copy deploy/ngrok/netlify-edge-chat.js → netlify/edge-functions/chat-proxy.js
-Update NGROK_ORIGIN inside that file when tunnel URL changes.
+Copy deploy/ngrok/netlify-edge-api.js → netlify/edge-functions/api-proxy.js
+Copy deploy/ngrok/portfolio-chat-client.js → portfolio public/ folder
+Update NGROK_ORIGIN inside edge files when tunnel URL changes.
+
+Native chat (no iframe timeout):
+  const chat = createPortfolioChat({ apiBase: "/rag-api" });
+  const { answer } = await chat.ask(question, "ar");
 -->

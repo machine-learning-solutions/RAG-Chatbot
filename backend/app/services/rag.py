@@ -1,3 +1,4 @@
+import asyncio
 import re
 
 from langchain_core.documents import Document
@@ -59,7 +60,9 @@ ARABIC_RAG_PROMPT = ChatPromptTemplate.from_messages(
             "لا تكتب التاريخ وحده.\n"
             "14. «كم بده/بكم/السعر/التكلفة» تعني التسعير والأتعاب وليس عدد المشاريع.\n"
             "15. عند استخدام قائمة مرقّمة أكمِل كل بند بجملة أو جملتين؛ "
-            "لا تبدأ بنداً دون إنهائه ولا تتوقف في منتصف القائمة.",
+            "لا تبدأ بنداً دون إنهائه ولا تتوقف في منتصف كلمة أو جملة.\n"
+            "16. عند السؤال عن المهارات: اذكر المهارات البرمجية والتقنية والهندسية "
+            "من قسم المهارات في المصادر (لغات، أطر، أدوات) وليس المقدمة العامة فقط.",
         ),
         (
             "human",
@@ -203,9 +206,20 @@ class RetrievalService:
         document_id: str | None = None,
         use_reranker: bool | None = None,
         use_hybrid: bool | None = None,
+        portfolio_fast: bool = False,
     ) -> list[tuple[Document, float]]:
         k = top_k or self.settings.top_k
-        retrieval_k = max(k, self.settings.retrieval_min_k)
+        min_k = (
+            self.settings.portfolio_retrieval_min_k
+            if portfolio_fast
+            else self.settings.retrieval_min_k
+        )
+        fetch_multiplier = (
+            self.settings.portfolio_retrieval_fetch_multiplier
+            if portfolio_fast
+            else self.settings.retrieval_fetch_multiplier
+        )
+        retrieval_k = max(k, min_k)
 
         should_rerank = (
             use_reranker
@@ -219,7 +233,7 @@ class RetrievalService:
         )
 
         fetch_k = (
-            retrieval_k * self.settings.retrieval_fetch_multiplier
+            retrieval_k * fetch_multiplier
             if should_rerank and self.reranker
             else retrieval_k * 2
         )
@@ -230,8 +244,11 @@ class RetrievalService:
 
         for search_query in search_queries:
             ranked_lists.append(
-                self.vector_manager.search(
-                    search_query, k=fetch_k, document_id=document_id
+                await asyncio.to_thread(
+                    self.vector_manager.search,
+                    search_query,
+                    fetch_k,
+                    document_id,
                 )
             )
 
@@ -252,12 +269,16 @@ class RetrievalService:
 
         # Stage 2: cross-encoder reranking on candidate pool
         if should_rerank and self.reranker and candidates:
-            ranked = self.reranker.rerank(query, candidates, k)
+            ranked = await asyncio.to_thread(
+                self.reranker.rerank, query, candidates, k
+            )
         else:
             ranked = candidates[:k]
 
         # Stage 3: relevance filtering before generation
-        return apply_context_filters(ranked, self.settings)
+        return apply_context_filters(
+            ranked, self.settings, portfolio_fast=portfolio_fast
+        )
 
 
 class GenerationService:
@@ -272,13 +293,26 @@ class GenerationService:
             num_predict=settings.llm_num_predict,
             num_ctx=2048,
         ).bind(think=False)
+        self.portfolio_llm = ChatOllama(
+            base_url=settings.ollama_base_url,
+            model=settings.ollama_model,
+            temperature=settings.llm_temperature,
+            num_predict=settings.portfolio_llm_num_predict,
+            num_ctx=1536,
+        ).bind(think=False)
 
     def build_context(
         self,
         chunks: list[tuple[Document, float]],
         language: str = "en",
+        portfolio_fast: bool = False,
     ) -> str:
         parts: list[str] = []
+        max_chars = (
+            self.settings.portfolio_context_chunk_max_chars
+            if portfolio_fast
+            else self.settings.context_chunk_max_chars
+        )
         for index, (doc, _) in enumerate(chunks, start=1):
             source = doc.metadata.get("filename", "unknown")
             page = doc.metadata.get("page")
@@ -292,7 +326,6 @@ class GenerationService:
                 header += f" (page {page})" if language != "ar" else f" (صفحة {page})"
 
             content = doc.page_content.strip()
-            max_chars = self.settings.context_chunk_max_chars
             if len(content) > max_chars:
                 content = content[:max_chars].rstrip() + "..."
             parts.append(f"{header}\n{content}")
@@ -330,6 +363,7 @@ class GenerationService:
         question: str,
         chunks: list[tuple[Document, float]],
         language: str | None = None,
+        portfolio_fast: bool = False,
     ) -> str:
         lang = resolve_language(question, language)
 
@@ -337,16 +371,24 @@ class GenerationService:
         if static:
             return static if lang != "ar" else sanitize_arabic_answer(static)
 
-        all_distinct = deduplicate_chunks(chunks)
-        context = self.build_context(all_distinct, language=lang)
+        max_chunks = (
+            self.settings.portfolio_max_context_chunks
+            if portfolio_fast
+            else self.settings.max_context_chunks
+        )
+        all_distinct = deduplicate_chunks(chunks)[:max_chunks]
+        context = self.build_context(
+            all_distinct, language=lang, portfolio_fast=portfolio_fast
+        )
 
         if lang == "ar":
             structured = format_certifications_answer(question, all_distinct)
             if structured:
                 return sanitize_arabic_answer(structured)
 
+        llm = self.portfolio_llm if portfolio_fast else self.llm
         prompt = ARABIC_RAG_PROMPT if lang == "ar" else ENGLISH_RAG_PROMPT
-        chain = prompt | self.llm
+        chain = prompt | llm
         response = await chain.ainvoke({"context": context, "question": question})
         answer = deduplicate_answer(response.content)
         if lang == "ar" and answer:

@@ -46,6 +46,53 @@ def api_get(path: str, timeout: float = API_TIMEOUT) -> dict[str, Any]:
         return response.json()
 
 
+def _parse_sse_buffer(buffer: str) -> tuple[list[dict[str, str]], str]:
+    events: list[dict[str, str]] = []
+    parts = buffer.split("\n\n")
+    rest = parts.pop() if parts else buffer
+    for part in parts:
+        if not part.strip():
+            continue
+        event = "message"
+        data = ""
+        for line in part.split("\n"):
+            if line.startswith("event:"):
+                event = line[6:].strip()
+            elif line.startswith("data:"):
+                data += line[5:].strip()
+        events.append({"event": event, "data": data})
+    return events, rest
+
+
+def api_post_stream(
+    path: str,
+    json: dict | None = None,
+    timeout: float = CHAT_TIMEOUT,
+) -> dict[str, Any]:
+    import json as json_lib
+
+    with httpx.Client(timeout=timeout) as client:
+        with client.stream(
+            "POST",
+            f"{BACKEND_URL}{path}",
+            json={**(json or {}), "stream": True},
+            headers={"Accept": "text/event-stream"},
+            timeout=timeout,
+        ) as response:
+            response.raise_for_status()
+            buffer = ""
+            for chunk in response.iter_bytes():
+                buffer += chunk.decode()
+                events, buffer = _parse_sse_buffer(buffer)
+                for evt in events:
+                    if evt["event"] == "error":
+                        detail = json_lib.loads(evt["data"]).get("detail", "Chat failed")
+                        raise RuntimeError(detail)
+                    if evt["event"] == "result":
+                        return json_lib.loads(evt["data"])
+    raise RuntimeError("Chat ended without a result")
+
+
 def api_post(
     path: str,
     json: dict | None = None,
@@ -153,8 +200,12 @@ def render_chat() -> None:
                         "top_k": st.session_state.get("top_k", 5),
                         "use_reranker": st.session_state.get("use_reranker", True),
                         "use_hybrid": st.session_state.get("use_hybrid", True),
+                        "portfolio_fast": portfolio_mode,
                     }
-                    result = api_post("/api/chat", json=payload)
+                    if portfolio_mode:
+                        result = api_post_stream("/api/chat", json=payload)
+                    else:
+                        result = api_post("/api/chat", json=payload)
                     answer = result.get("answer", "No response")
 
                     render_bidi_text(answer)

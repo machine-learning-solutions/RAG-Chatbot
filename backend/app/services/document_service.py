@@ -149,13 +149,26 @@ class ChatService:
         return docs[0].id
 
     async def chat(
-        self, request: ChatRequest, session: AsyncSession | None = None
+        self,
+        request: ChatRequest,
+        session: AsyncSession | None = None,
+        portfolio_fast: bool = False,
     ) -> ChatResponse:
-        use_rerank = (
-            request.use_reranker
-            if request.use_reranker is not None
-            else self.settings.reranker_enabled
-        )
+        if portfolio_fast:
+            use_rerank = self.settings.portfolio_reranker_enabled
+            top_k = min(
+                request.top_k or self.settings.top_k,
+                self.settings.portfolio_top_k,
+            )
+            use_hybrid = True
+        else:
+            use_rerank = (
+                request.use_reranker
+                if request.use_reranker is not None
+                else self.settings.reranker_enabled
+            )
+            top_k = request.top_k
+            use_hybrid = request.use_hybrid
         reranker = get_reranker() if use_rerank else None
         retrieval = RetrievalService(
             self.vector_manager,
@@ -171,10 +184,11 @@ class ChatService:
 
         chunks = await retrieval.retrieve(
             query=request.question,
-            top_k=request.top_k,
+            top_k=top_k,
             document_id=scoped_document_id,
-            use_reranker=request.use_reranker,
-            use_hybrid=request.use_hybrid,
+            use_reranker=use_rerank if portfolio_fast else request.use_reranker,
+            use_hybrid=use_hybrid,
+            portfolio_fast=portfolio_fast,
         )
 
         lang = resolve_language(request.question, request.language)
@@ -193,7 +207,10 @@ class ChatService:
             )
 
         answer = await self.generation.generate(
-            request.question, chunks, language=lang
+            request.question,
+            chunks,
+            language=lang,
+            portfolio_fast=portfolio_fast,
         )
         sources = self.generation.to_source_chunks(chunks)
 

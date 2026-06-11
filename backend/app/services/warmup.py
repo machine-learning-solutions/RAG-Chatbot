@@ -35,3 +35,16 @@ async def warmup_models() -> None:
         logger.info("Ollama model warmed up")
     except Exception as exc:
         logger.warning("Ollama warmup failed: %s", exc)
+
+    if settings.reranker_enabled:
+        try:
+            from langchain_core.documents import Document
+
+            from app.services.reranker import get_reranker
+
+            reranker = get_reranker()
+            dummy = Document(page_content="warmup technical skills section")
+            reranker.rerank("warmup query", [(dummy, 0.0)], top_k=1)
+            logger.info("Reranker model warmed up")
+        except Exception as exc:
+            logger.warning("Reranker warmup failed: %s", exc)

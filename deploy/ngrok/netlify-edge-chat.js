@@ -26,10 +26,18 @@ export default async (request, context) => {
   headers.set("ngrok-skip-browser-warning", "1");
   headers.set("User-Agent", "PortfolioChat/1.0");
 
-  return fetch(target.toString(), {
-    method: request.method,
-    headers,
-    body: request.body,
-    redirect: "follow",
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 120_000);
+
+  try {
+    return await fetch(target.toString(), {
+      method: request.method,
+      headers,
+      body: request.body,
+      redirect: "follow",
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
 };
