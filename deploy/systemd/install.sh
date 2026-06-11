@@ -51,7 +51,8 @@ systemctl enable chatbot-watchdog.timer
 
 echo "==> Starting stack + watchdog..."
 systemctl start chatbot-watchdog.timer
-bash "$RECOVER"
+RUN_USER="${SUDO_USER:-jadaboawwad}"
+sudo -u "$RUN_USER" -H bash "$RECOVER"
 
 echo ""
 echo "Done. Status:"
