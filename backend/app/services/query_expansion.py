@@ -16,6 +16,28 @@ logger = logging.getLogger(__name__)
 
 LATIN_TOKEN_RE = re.compile(r"[a-zA-Z]{2,}")
 
+CERT_INTENT_RE = re.compile(r"شهاد|ترخيص|certif|license", re.IGNORECASE)
+SKILLS_INTENT_RE = re.compile(r"مهار|skills", re.IGNORECASE)
+PROJECTS_INTENT_RE = re.compile(r"مشاريع|مشروع|projects", re.IGNORECASE)
+EDUCATION_INTENT_RE = re.compile(r"تعليم|education", re.IGNORECASE)
+EXPERIENCE_INTENT_RE = re.compile(r"خبرة|experience|عمل", re.IGNORECASE)
+CONTACT_INTENT_RE = re.compile(
+    r"تواصل|contact|email|phone|هاتف|بريد|linkedin", re.IGNORECASE
+)
+
+# Deterministic English retrieval queries when portfolio intent is known (no LLM).
+PORTFOLIO_INTENT_SEARCH: list[tuple[re.Pattern[str], str]] = [
+    (CERT_INTENT_RE, "Licenses Certifications Purple SystemVerilog"),
+    (SKILLS_INTENT_RE, "Technical Skills Software Skills Hardware Skills Ladder VFD"),
+    (
+        PROJECTS_INTENT_RE,
+        "EXPERIENCE WeFix Nuqayyem Quantalytics Olive Blinx 4Tech CSC Beyond",
+    ),
+    (EDUCATION_INTENT_RE, "Education"),
+    (EXPERIENCE_INTENT_RE, "EXPERIENCE"),
+    (CONTACT_INTENT_RE, "Contact LinkedIn email phone"),
+]
+
 ENGLISH_SEARCH_PROMPT = ChatPromptTemplate.from_messages(
     [
         (
@@ -56,6 +78,14 @@ def has_sufficient_latin_terms(text: str) -> bool:
     if len(tokens) >= 2:
         return True
     return len(tokens) == 1 and len(tokens[0]) >= 5
+
+
+def resolve_portfolio_intent_search_query(question: str) -> str | None:
+    """Return a deterministic English search query when question intent is known."""
+    for pattern, search_query in PORTFOLIO_INTENT_SEARCH:
+        if pattern.search(question):
+            return search_query
+    return None
 
 
 def _dedupe_queries(queries: list[str]) -> list[str]:
@@ -135,6 +165,15 @@ class QueryExpander:
     async def expand(self, question: str, portfolio_fast: bool = False) -> list[str]:
         """Return unique search queries: original + optional LLM variations."""
         original = question.strip()
+
+        if portfolio_fast:
+            intent_query = resolve_portfolio_intent_search_query(original)
+            if intent_query:
+                logger.debug(
+                    "Using deterministic portfolio intent query (2-query cap)"
+                )
+                return _dedupe_queries([original, intent_query])[:2]
+
         extras = await self.extra_queries(original, portfolio_fast=portfolio_fast)
         queries = _dedupe_queries([original, *extras])
 

@@ -14,7 +14,14 @@ from app.services.hybrid_search import (
     reciprocal_rank_fusion,
     rescore_by_query_term_overlap,
 )
-from app.services.query_expansion import QueryExpander, has_latin_tokens
+from app.services.query_expansion import (
+    CERT_INTENT_RE,
+    PORTFOLIO_INTENT_SEARCH,
+    PROJECTS_INTENT_RE,
+    QueryExpander,
+    SKILLS_INTENT_RE,
+    has_latin_tokens,
+)
 from app.services.language import (
     needs_arabic_polish,
     normalize_phone_numbers,
@@ -227,6 +234,22 @@ LIST_QUESTION_RE = re.compile(
     re.IGNORECASE,
 )
 
+FULL_LIST_QUESTION_RE = re.compile(
+    r"شهاد|ترخيص|certif|license|اسرد|اذكر|أذكر|كل|جميع|all|every|complete",
+    re.IGNORECASE,
+)
+
+
+def portfolio_num_predict(settings: Settings, question: str) -> int:
+    """High token budget only for exhaustive list answers (certs, «list all»)."""
+    if CERT_INTENT_RE.search(question):
+        return settings.portfolio_llm_num_predict
+    if FULL_LIST_QUESTION_RE.search(question) and LIST_QUESTION_RE.search(question):
+        return settings.portfolio_llm_num_predict
+    if LIST_QUESTION_RE.search(question):
+        return settings.portfolio_llm_num_predict_medium
+    return settings.portfolio_llm_num_predict_short
+
 
 def is_skills_section_chunk(content: str) -> bool:
     lowered = content.lower()
@@ -372,30 +395,21 @@ async def augment_section_chunks(
 ) -> list[tuple[Document, float]]:
     """Fetch missing KB section chunks for list-style questions (domain-agnostic)."""
     boost_specs: list[
-        tuple[re.Pattern[str], str, callable[[list[tuple[Document, float]]], bool]]
+        tuple[re.Pattern[str], callable[[list[tuple[Document, float]]], bool]]
     ] = [
-        (
-            re.compile(r"شهاد|ترخيص|certif|license", re.IGNORECASE),
-            "Licenses Certifications Purple SystemVerilog",
-            certs_chunks_complete,
-        ),
-        (
-            SKILLS_QUESTION_RE,
-            "Technical Skills Software Skills Hardware Skills Ladder VFD",
-            skills_chunks_complete,
-        ),
-        (
-            PROJECTS_QUESTION_RE,
-            "EXPERIENCE WeFix Nuqayyem Quantalytics Olive Blinx 4Tech CSC Beyond",
-            experience_chunks_complete,
-        ),
+        (CERT_INTENT_RE, certs_chunks_complete),
+        (SKILLS_INTENT_RE, skills_chunks_complete),
+        (PROJECTS_INTENT_RE, experience_chunks_complete),
     ]
 
     merged = list(chunks)
     seen = {_chunk_key(doc) for doc, _ in merged}
 
-    for pattern, query, is_complete in boost_specs:
+    for pattern, is_complete in boost_specs:
         if not pattern.search(question) or is_complete(merged):
+            continue
+        query = next((q for p, q in PORTFOLIO_INTENT_SEARCH if p is pattern), None)
+        if not query:
             continue
         vector_hits = await asyncio.to_thread(
             vector_manager.search, query, fetch_k, document_id
@@ -602,6 +616,28 @@ class GenerationService:
             num_predict=settings.portfolio_llm_num_predict,
             num_ctx=4096,
         ).bind(think=False)
+        self.portfolio_llm_medium = ChatOllama(
+            base_url=settings.ollama_base_url,
+            model=settings.ollama_model,
+            temperature=settings.llm_temperature,
+            num_predict=settings.portfolio_llm_num_predict_medium,
+            num_ctx=4096,
+        ).bind(think=False)
+        self.portfolio_llm_short = ChatOllama(
+            base_url=settings.ollama_base_url,
+            model=settings.ollama_model,
+            temperature=settings.llm_temperature,
+            num_predict=settings.portfolio_llm_num_predict_short,
+            num_ctx=4096,
+        ).bind(think=False)
+
+    def _portfolio_llm_for(self, question: str):
+        tier = portfolio_num_predict(self.settings, question)
+        if tier == self.settings.portfolio_llm_num_predict:
+            return self.portfolio_llm
+        if tier == self.settings.portfolio_llm_num_predict_medium:
+            return self.portfolio_llm_medium
+        return self.portfolio_llm_short
 
     def build_context(
         self,
@@ -711,7 +747,11 @@ class GenerationService:
             compact_chunks=is_projects_list,
         )
 
-        llm = self.portfolio_llm if portfolio_fast else self.llm
+        llm = (
+            self._portfolio_llm_for(question)
+            if portfolio_fast
+            else self.llm
+        )
         prompt = ARABIC_RAG_PROMPT if lang == "ar" else ENGLISH_RAG_PROMPT
         chain = prompt | llm
         response = await chain.ainvoke({"context": context, "question": question})
