@@ -20,7 +20,10 @@ from app.services.query_expansion import (
     PROJECTS_INTENT_RE,
     QueryExpander,
     SKILLS_INTENT_RE,
+    extract_named_app_search_term,
     has_latin_tokens,
+    is_plural_app_role_question,
+    is_single_app_role_question,
 )
 from app.services.language import (
     needs_arabic_polish,
@@ -84,12 +87,63 @@ ARABIC_RAG_PROMPT = ChatPromptTemplate.from_messages(
             "(اسم المشروع/الشركة، الهدف، التقنيات) بترقيم عربي متسلسل؛ ابدأ كل بند "
             "باسم المشروع أو الشركة كما في المصدر؛ لا تخلط مع المهارات أو الشهادات أو "
             "المقدمة العامة.\n"
+            "18. عند السؤال عن دور جهاد في عدة تطبيقات أو منتجات (جمع): اذكر كل "
+            "تطبيق وارداً في المصادر بترقيم عربي؛ بنداً واحداً لكل تطبيق/شركة.\n"
+            "19. عند السؤال عن دور جهاد في تطبيق واحد محدد باسمه: أجب بفقرة أو فقرتين "
+            "تفصيليتين وافيتين (ليس قائمة مرقّمة رفيعة)؛ اذكر الشركة أو المؤسسة، "
+            "المسمى الوظيفي، الفترة إن وُجدت، المسؤوليات والمهام، والتقنيات "
+            "المستخدمة من المصادر المتعلقة بهذا التطبيق فقط؛ لا تُجزّئ الدور إلى "
+            "بنود مرقّمة قصيرة ولا تخلط مع تطبيقات أخرى.\n"
         ),
         (
             "human",
             "**المعلومات من قاعدة المعرفة:**\n{context}\n\n"
             "**السؤال:**\n{question}\n\n"
             "**الإجابة:**",
+        ),
+    ]
+)
+
+SINGLE_APP_ROLE_ARABIC_PROMPT = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            "أنت مساعد يجيب بالعربية الفصحى من معلومات قاعدة المعرفة.\n\n"
+            "السؤال عن دور شخص في تطبيق واحد محدد باسمه. أجب بفقرتين أو ثلاث فقرات "
+            "تفصيلية متصلة (ممنوع استخدام قوائم مرقّمة أو ترقيم ١. ٢.).\n\n"
+            "اذكر من المصادر كل ما يتوفر عن هذا التطبيق تحديداً:\n"
+            "- الشركة أو المؤسسة صاحبة العمل أو العميل\n"
+            "- المسمى الوظيفي وفترة العمل إن وُجدت\n"
+            "- طبيعة التطبيق وهدفه\n"
+            "- مسؤوليات جهاد ومهامه الفعلية\n"
+            "- التقنيات والأدوات المستخدمة\n"
+            "- أي تفاصيل إضافية واردة في المصادر\n\n"
+            "لا تذكر تطبيقات أخرى غير المطلوب. لا تكرر المعنى. "
+            "ترجم المصطلحات التقنية إلى العربية. أجب مباشرة دون مقدمات عامة.",
+        ),
+        (
+            "human",
+            "**المعلومات من قاعدة المعرفة:**\n{context}\n\n"
+            "**السؤال:**\n{question}\n\n"
+            "**الإجابة (فقرات تفصيلية دون ترقيم):**",
+        ),
+    ]
+)
+
+SINGLE_APP_ROLE_ENGLISH_PROMPT = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            "Answer from the knowledge base about the person's role in one specifically "
+            "named application. Write two or three detailed paragraphs (no numbered lists). "
+            "Include company/institution, job title, period, app purpose, responsibilities, "
+            "tasks, and technologies from the sources. Do not mention other applications.",
+        ),
+        (
+            "human",
+            "**Knowledge base:**\n{context}\n\n"
+            "**Question:**\n{question}\n\n"
+            "**Answer (detailed paragraphs, no numbering):**",
         ),
     ]
 )
@@ -143,7 +197,13 @@ ENGLISH_RAG_PROMPT = ChatPromptTemplate.from_messages(
             "experience), include every relevant item from the sources with names, "
             "details, and dates when present; do not summarize from the intro alone "
             "if a detailed section exists in the sources.\n"
-            "11. When using a numbered list, every item must include text on the same "
+            "11. When the question asks about the person's role across multiple "
+            "applications, list every named app from the experience section.\n"
+            "13. When the question asks about the role in one specific named "
+            "application, answer in one or two detailed paragraphs with company, "
+            "job title, period, responsibilities, tasks, and technologies from "
+            "relevant sources only; do not use a thin numbered list.\n"
+            "12. When using a numbered list, every item must include text on the same "
             "line. Never output a bare number marker (e.g. 12. or **12.**) with no content.",
         ),
         (
@@ -224,15 +284,56 @@ LIST_SECTION_HINTS: list[tuple[re.Pattern[str], tuple[str, ...]]] = [
         EXPERIENCE_SECTION_HEADERS,
     ),
     (
+        re.compile(
+            r"تطبيقات|applications|مختلفة?|مختلف",
+            re.IGNORECASE,
+        ),
+        EXPERIENCE_SECTION_HEADERS,
+    ),
+    (
         re.compile(r"تعليم|education", re.IGNORECASE),
         ("education",),
     ),
 ]
 
 LIST_QUESTION_RE = re.compile(
-    r"شهاد|ترخيص|certif|license|مهار|skills|مشاريع|مشروع|projects",
+    r"شهاد|ترخيص|certif|license|مهار|skills|مشاريع|مشروع|projects|"
+    r"تطبيقات|applications",
     re.IGNORECASE,
 )
+
+
+def is_experience_list_question(question: str) -> bool:
+    if is_single_app_role_question(question):
+        return False
+    return bool(
+        PROJECTS_QUESTION_RE.search(question)
+        or is_plural_app_role_question(question)
+    )
+
+
+def prioritize_chunks_for_named_app(
+    chunks: list[tuple[Document, float]],
+    question: str,
+) -> list[tuple[Document, float]]:
+    """Keep chunks that mention the named application; prefer focused hits."""
+    term = extract_named_app_search_term(question)
+    if not term:
+        return chunks
+    needle = term.lower()
+    matching = [
+        item for item in chunks if needle in item[0].page_content.lower()
+    ]
+    if not matching:
+        return chunks
+    matching.sort(
+        key=lambda item: (
+            0 if needle in item[0].page_content.lower()[:300] else 1,
+            -item[0].page_content.lower().count(needle),
+            -len(item[0].page_content),
+        )
+    )
+    return matching
 
 FULL_LIST_QUESTION_RE = re.compile(
     r"شهاد|ترخيص|certif|license|اسرد|اذكر|أذكر|كل|جميع|all|every|complete",
@@ -244,9 +345,13 @@ def portfolio_num_predict(settings: Settings, question: str) -> int:
     """High token budget only for exhaustive list answers (certs, «list all»)."""
     if CERT_INTENT_RE.search(question):
         return settings.portfolio_llm_num_predict
+    if is_plural_app_role_question(question):
+        return settings.portfolio_llm_num_predict
+    if is_single_app_role_question(question):
+        return settings.portfolio_llm_num_predict_medium
     if FULL_LIST_QUESTION_RE.search(question) and LIST_QUESTION_RE.search(question):
         return settings.portfolio_llm_num_predict
-    if LIST_QUESTION_RE.search(question):
+    if is_experience_list_question(question) or LIST_QUESTION_RE.search(question):
         return settings.portfolio_llm_num_predict_medium
     return settings.portfolio_llm_num_predict_short
 
@@ -369,6 +474,41 @@ def _compact_section_chunk(content: str, max_chars: int = 800) -> str:
     return result
 
 
+def _compact_app_role_chunk(content: str, max_chars: int = 900) -> str:
+    """One job/app entry: header + summary; keep Optimum teams-and-projects list."""
+    text = content.strip()
+    if len(text) <= max_chars:
+        return text
+    if re.search(r"teams and projects", text, re.IGNORECASE):
+        return _compact_section_chunk(text, max_chars)
+
+    kept: list[str] = []
+    past_header = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("##"):
+            kept.append(line)
+            past_header = True
+            continue
+        if not past_header:
+            kept.append(line)
+            continue
+        if stripped.startswith("- "):
+            break
+        if re.match(r"^[A-Za-z].*:\s*$", stripped):
+            break
+        kept.append(line)
+        if len("\n".join(kept)) >= max_chars:
+            break
+
+    result = "\n".join(kept).strip()
+    if len(result) > max_chars:
+        result = result[:max_chars].rstrip() + "..."
+    elif len(result) < len(text):
+        result += "..."
+    return result
+
+
 def deduplicate_by_content_prefix(
     chunks: list[tuple[Document, float]],
     prefix_len: int = 220,
@@ -400,10 +540,28 @@ async def augment_section_chunks(
         (CERT_INTENT_RE, certs_chunks_complete),
         (SKILLS_INTENT_RE, skills_chunks_complete),
         (PROJECTS_INTENT_RE, experience_chunks_complete),
+        (re.compile(r"تطبيقات|applications|مختلف", re.IGNORECASE), experience_chunks_complete),
     ]
 
     merged = list(chunks)
     seen = {_chunk_key(doc) for doc, _ in merged}
+
+    if is_single_app_role_question(question):
+        term = extract_named_app_search_term(question)
+        if term and not any(
+            term.lower() in doc.page_content.lower() for doc, _ in merged
+        ):
+            query = f"{term} role experience application mobile web developed"
+            vector_hits = await asyncio.to_thread(
+                vector_manager.search, query, fetch_k, document_id
+            )
+            bm25_hits = await bm25.search(query, k=fetch_k, document_id=document_id)
+            for doc, score in vector_hits + bm25_hits:
+                key = _chunk_key(doc)
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append((doc, score))
 
     for pattern, is_complete in boost_specs:
         if not pattern.search(question) or is_complete(merged):
@@ -438,7 +596,7 @@ def prioritize_section_chunks(
             primary.sort(key=lambda item: _skills_chunk_rank(item[0].page_content))
             return primary
 
-    if PROJECTS_QUESTION_RE.search(question):
+    if is_experience_list_question(question):
         primary = [
             item
             for item in chunks
@@ -648,6 +806,7 @@ class GenerationService:
         chunk_max_chars: int | None = None,
         total_max_chars: int | None = None,
         compact_chunks: bool = False,
+        app_role_compact: bool = False,
     ) -> str:
         parts: list[str] = []
         max_chars = chunk_max_chars or (
@@ -672,7 +831,9 @@ class GenerationService:
                 header += f" (page {page})" if language != "ar" else f" (صفحة {page})"
 
             content = doc.page_content.strip()
-            if compact_chunks:
+            if app_role_compact:
+                content = _compact_app_role_chunk(content, max_chars)
+            elif compact_chunks:
                 content = _compact_section_chunk(content, max_chars)
             elif len(content) > max_chars:
                 content = content[:max_chars].rstrip() + "..."
@@ -728,10 +889,17 @@ class GenerationService:
             portfolio_fast
             and re.search(r"شهاد|ترخيص|certif|license", question, re.IGNORECASE)
         )
-        is_projects_list = bool(
-            portfolio_fast and PROJECTS_QUESTION_RE.search(question)
+        is_single_app = bool(portfolio_fast and is_single_app_role_question(question))
+        is_plural_app_role = bool(
+            portfolio_fast and is_plural_app_role_question(question)
         )
-        if is_certs_list or is_projects_list:
+        is_experience_list = bool(
+            portfolio_fast and is_experience_list_question(question)
+        )
+        if is_single_app:
+            merged = deduplicate_by_content_prefix(chunks)
+            all_distinct = prioritize_chunks_for_named_app(merged, question)[:3]
+        elif is_certs_list or is_experience_list:
             merged = deduplicate_by_content_prefix(chunks)
             all_distinct = prioritize_section_chunks(merged, question)[:max_chunks]
         else:
@@ -742,9 +910,18 @@ class GenerationService:
             all_distinct,
             language=lang,
             portfolio_fast=portfolio_fast,
-            chunk_max_chars=1100 if is_projects_list else None,
-            total_max_chars=8500 if is_projects_list else None,
-            compact_chunks=is_projects_list,
+            chunk_max_chars=(
+                2500
+                if is_single_app
+                else (900 if is_plural_app_role else (1100 if is_experience_list else None))
+            ),
+            total_max_chars=(
+                5500
+                if is_single_app
+                else (8500 if is_experience_list else None)
+            ),
+            compact_chunks=is_experience_list and not is_plural_app_role,
+            app_role_compact=is_plural_app_role,
         )
 
         llm = (
@@ -752,11 +929,19 @@ class GenerationService:
             if portfolio_fast
             else self.llm
         )
-        prompt = ARABIC_RAG_PROMPT if lang == "ar" else ENGLISH_RAG_PROMPT
+        if is_single_app and lang == "ar":
+            prompt = SINGLE_APP_ROLE_ARABIC_PROMPT
+        elif is_single_app:
+            prompt = SINGLE_APP_ROLE_ENGLISH_PROMPT
+        else:
+            prompt = ARABIC_RAG_PROMPT if lang == "ar" else ENGLISH_RAG_PROMPT
         chain = prompt | llm
         response = await chain.ainvoke({"context": context, "question": question})
         raw_answer = response.content or ""
-        is_list_question = bool(LIST_QUESTION_RE.search(question))
+        is_list_question = bool(
+            LIST_QUESTION_RE.search(question)
+            and not is_single_app_role_question(question)
+        )
         answer = strip_empty_numbered_items(
             raw_answer if is_list_question else deduplicate_answer(raw_answer)
         )
@@ -765,7 +950,9 @@ class GenerationService:
                 needs_arabic_polish(answer) or is_degraded_arabic_answer(answer)
             ):
                 answer = await self._polish_arabic(answer, question, context)
-            answer = sanitize_arabic_answer(answer, light=is_list_question)
+            answer = sanitize_arabic_answer(
+                answer, light=is_list_question or is_single_app
+            )
             if is_degraded_arabic_answer(answer):
                 answer = KB_NOT_FOUND_AR
         elif answer:

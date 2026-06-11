@@ -1,8 +1,14 @@
 import asyncio
 
 from app.config import Settings
-from app.services.query_expansion import QueryExpander, resolve_portfolio_intent_search_query
-from app.services.rag import portfolio_num_predict
+from app.services.query_expansion import (
+    QueryExpander,
+    extract_named_app_search_term,
+    is_plural_app_role_question,
+    is_single_app_role_question,
+    resolve_portfolio_intent_search_query,
+)
+from app.services.rag import is_experience_list_question, portfolio_num_predict
 
 
 def test_resolve_cert_intent():
@@ -32,3 +38,34 @@ def test_portfolio_num_predict_tiers():
     assert portfolio_num_predict(settings, "اسرد جميع شهادات جهاد") == 1536
     assert portfolio_num_predict(settings, "ما هي مهارات جهاد؟") == 1024
     assert portfolio_num_predict(settings, "ما رقم هاتفه؟") == 512
+
+
+def test_plural_app_role_intent():
+    q = "ما هو دور جهاد في التطبيقات المختلفة؟"
+    assert is_plural_app_role_question(q)
+    assert not is_single_app_role_question(q)
+    assert is_experience_list_question(q)
+    assert resolve_portfolio_intent_search_query(q) is not None
+    assert portfolio_num_predict(Settings(), q) == 1536
+
+
+def test_single_app_role_intent():
+    q = "ما دور جهاد في تطبيق نقيم؟"
+    assert is_single_app_role_question(q)
+    assert not is_plural_app_role_question(q)
+    assert not is_experience_list_question(q)
+    assert extract_named_app_search_term(q) == "Nuqayyem"
+    assert "Nuqayyem" in resolve_portfolio_intent_search_query(q)
+    assert portfolio_num_predict(Settings(), q) == 1024
+
+
+def test_single_app_role_expand_two_queries():
+    settings = Settings(portfolio_query_expansion_enabled=True)
+    queries = asyncio.run(
+        QueryExpander(settings).expand(
+            "ما دور جهاد في تطبيق بلنكس؟",
+            portfolio_fast=True,
+        )
+    )
+    assert len(queries) == 2
+    assert any("Blinx" in query for query in queries)

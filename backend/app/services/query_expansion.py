@@ -19,6 +19,29 @@ LATIN_TOKEN_RE = re.compile(r"[a-zA-Z]{2,}")
 CERT_INTENT_RE = re.compile(r"شهاد|ترخيص|certif|license", re.IGNORECASE)
 SKILLS_INTENT_RE = re.compile(r"مهار|skills", re.IGNORECASE)
 PROJECTS_INTENT_RE = re.compile(r"مشاريع|مشروع|projects", re.IGNORECASE)
+ROLE_INTENT_RE = re.compile(
+    r"دور|مسؤوليات|مساهمة|role|responsibilit", re.IGNORECASE
+)
+PLURAL_APP_ROLE_RE = re.compile(
+    r"تطبيقات|applications|مختلفة?|مختلف|جميع|كل\s+التطبيق",
+    re.IGNORECASE,
+)
+SINGLE_APP_ROLE_RE = re.compile(
+    r"تطبيق|application|\bapp\b", re.IGNORECASE
+)
+
+# Arabic/Latin aliases → resume search terms (retrieval only).
+APP_NAME_ALIASES: tuple[tuple[str, str], ...] = (
+    (r"نقيم|nuqayyem", "Nuqayyem"),
+    (r"بلنكس|blinx", "Blinx"),
+    (r"كوانت|quantalytics|كوانتلاتكس|كوانتاليتكس", "Quantalytics"),
+    (r"أوليف|olive", "Olive"),
+    (r"ويفكس|wefix|jopath|جو\s*باث", "WeFix"),
+    (r"4\s*tech|4tech|iov", "4Tech"),
+    (r"csc|سي\s*إس\s*سي", "CSC"),
+    (r"decisionware|ديسيشن", "Decisionware"),
+    (r"optimum|أوبتيموم", "Optimum"),
+)
 EDUCATION_INTENT_RE = re.compile(r"تعليم|education", re.IGNORECASE)
 EXPERIENCE_INTENT_RE = re.compile(r"خبرة|experience|عمل", re.IGNORECASE)
 CONTACT_INTENT_RE = re.compile(
@@ -80,8 +103,52 @@ def has_sufficient_latin_terms(text: str) -> bool:
     return len(tokens) == 1 and len(tokens[0]) >= 5
 
 
+def extract_named_app_search_term(question: str) -> str | None:
+    """Map a named app in the question to a Latin resume search term."""
+    for pattern, term in APP_NAME_ALIASES:
+        if re.search(pattern, question, re.IGNORECASE):
+            return term
+    skip = frozenset(
+        {"role", "application", "applications", "app", "what", "jehad", "duties"}
+    )
+    for token in LATIN_TOKEN_RE.findall(question):
+        if token.lower() not in skip and len(token) >= 4:
+            return token
+    return None
+
+
+def is_single_app_role_question(question: str) -> bool:
+    """Role question about one named application (detailed answer, not a list)."""
+    if not ROLE_INTENT_RE.search(question):
+        return False
+    if PLURAL_APP_ROLE_RE.search(question):
+        return False
+    if not SINGLE_APP_ROLE_RE.search(question):
+        return False
+    return extract_named_app_search_term(question) is not None
+
+
+def is_plural_app_role_question(question: str) -> bool:
+    """Role question across multiple applications (numbered list answer)."""
+    if not ROLE_INTENT_RE.search(question):
+        return False
+    return bool(
+        PLURAL_APP_ROLE_RE.search(question)
+        or re.search(r"تطبيقات|applications", question, re.IGNORECASE)
+    )
+
+
 def resolve_portfolio_intent_search_query(question: str) -> str | None:
     """Return a deterministic English search query when question intent is known."""
+    if is_single_app_role_question(question):
+        term = extract_named_app_search_term(question)
+        if term:
+            return f"{term} role experience application mobile web developed"
+    if is_plural_app_role_question(question):
+        return (
+            "EXPERIENCE role applications mobile web led developed "
+            "WeFix Nuqayyem Quantalytics Olive Blinx 4Tech CSC Beyond"
+        )
     for pattern, search_query in PORTFOLIO_INTENT_SEARCH:
         if pattern.search(question):
             return search_query
