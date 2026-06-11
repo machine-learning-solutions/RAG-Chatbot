@@ -36,11 +36,12 @@ APP_NAME_ALIASES: tuple[tuple[str, str], ...] = (
     (r"بلنكس|blinx", "Blinx"),
     (r"كوانت|quantalytics|كوانتلاتكس|كوانتاليتكس", "Quantalytics"),
     (r"أوليف|olive", "Olive"),
-    (r"ويفكس|wefix|jopath|جو\s*باث", "WeFix"),
-    (r"4\s*tech|4tech|iov", "4Tech"),
-    (r"csc|سي\s*إس\s*سي", "CSC"),
-    (r"decisionware|ديسيشن", "Decisionware"),
-    (r"optimum|أوبتيموم", "Optimum"),
+    (r"ويفكس|wefix|jopath|جو\s*باث|جوباث", "WeFix"),
+    (r"4\s*tech|4tech|iov|فور\s*تيك|فورتيك", "4Tech"),
+    (r"csc|سي\s*إس\s*سي|سي\s*اس\s*سي", "CSC"),
+    (r"decisionware|ديسيشن|ديسجن", "Decisionware"),
+    (r"optimum|أوبتيموم|أوبتيوم", "Optimum"),
+    (r"أحمد\s*مبارك|mubarak", "4Tech"),
 )
 EDUCATION_INTENT_RE = re.compile(r"تعليم|education", re.IGNORECASE)
 EXPERIENCE_INTENT_RE = re.compile(r"خبرة|experience|عمل", re.IGNORECASE)
@@ -163,10 +164,34 @@ def is_plural_app_role_question(question: str) -> bool:
     )
 
 
+def is_company_experience_question(question: str) -> bool:
+    """Experience at one named company (detailed answer, not a job list)."""
+    if not EXPERIENCE_INTENT_RE.search(question):
+        return False
+    if is_contact_question(question):
+        return False
+    if is_single_app_role_question(question) or is_plural_app_role_question(question):
+        return False
+    if extract_named_app_search_term(question) is None:
+        return False
+    if PROJECTS_INTENT_RE.search(question) and not re.search(
+        r"في\s|عند\s|at\s|with\s", question, re.IGNORECASE
+    ):
+        return False
+    return True
+
+
 def resolve_portfolio_intent_search_query(question: str) -> str | None:
     """Return a deterministic English search query when question intent is known."""
     if is_contact_question(question):
         return CONTACT_SEARCH_QUERY
+    if is_company_experience_question(question):
+        term = extract_named_app_search_term(question)
+        if term:
+            return (
+                f"{term} experience job engineer responsibilities "
+                "technologies company project"
+            )
     if is_single_app_role_question(question):
         term = extract_named_app_search_term(question)
         if term:

@@ -4,6 +4,7 @@ from app.config import Settings
 from app.services.query_expansion import (
     QueryExpander,
     extract_named_app_search_term,
+    is_company_experience_question,
     is_contact_question,
     is_plural_app_role_question,
     is_single_app_role_question,
@@ -72,6 +73,17 @@ def test_contact_phone_intent():
     q = "اريد رقم للتواصل"
     assert is_contact_question(q)
     assert "outlook" in resolve_portfolio_intent_search_query(q).lower()
+
+
+def test_company_experience_intent():
+    q = "ما هي خبرة جهاد في فور تيك ؟"
+    assert is_company_experience_question(q)
+    assert not is_experience_list_question(q)
+    assert extract_named_app_search_term(q) == "4Tech"
+    intent = resolve_portfolio_intent_search_query(q)
+    assert "4Tech" in intent
+    assert "WeFix" not in intent
+    assert portfolio_num_predict(Settings(), q) == 1024
 
 
 def test_single_app_role_expand_two_queries():

@@ -22,6 +22,7 @@ from app.services.query_expansion import (
     SKILLS_INTENT_RE,
     extract_named_app_search_term,
     has_latin_tokens,
+    is_company_experience_question,
     is_contact_question,
     is_plural_app_role_question,
     is_single_app_role_question,
@@ -101,6 +102,51 @@ ARABIC_RAG_PROMPT = ChatPromptTemplate.from_messages(
             "**المعلومات من قاعدة المعرفة:**\n{context}\n\n"
             "**السؤال:**\n{question}\n\n"
             "**الإجابة:**",
+        ),
+    ]
+)
+
+COMPANY_EXPERIENCE_ARABIC_PROMPT = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            "أنت مساعد يجيب بالعربية الفصحى من معلومات قاعدة المعرفة.\n\n"
+            "السؤال عن خبرة جهاد في شركة أو مؤسسة محددة باسمها. أجب بفقرتين أو ثلاث "
+            "فقرات تفصيلية متصلة (ممنوع استخدام قوائم مرقّمة أو ترقيم ١. ٢.).\n\n"
+            "اذكر من المصادر كل ما يتوفر عن هذه الشركة تحديداً:\n"
+            "- اسم الشركة والمسمى الوظيفي وفترة العمل\n"
+            "- طبيعة المشروع أو المنتج والهدف منه\n"
+            "- مسؤوليات جهاد ومهامه الفعلية\n"
+            "- التقنيات والأدوات والمنهجيات المستخدمة\n"
+            "- أي إنجازات أو تفاصيل إضافية واردة في المصادر\n\n"
+            "لا تذكر شركات أو وظائف أخرى غير المطلوبة. لا تخلط مع WeFix أو Optimum "
+            "أو غيرها إذا لم تكن هي الشركة المسؤولة عنها. ترجم المصطلحات التقنية إلى "
+            "العربية. أجب مباشرة دون مقدمات عامة.",
+        ),
+        (
+            "human",
+            "**المعلومات من قاعدة المعرفة:**\n{context}\n\n"
+            "**السؤال:**\n{question}\n\n"
+            "**الإجابة (فقرات تفصيلية دون ترقيم):**",
+        ),
+    ]
+)
+
+COMPANY_EXPERIENCE_ENGLISH_PROMPT = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            "Answer from the knowledge base about the person's experience at one "
+            "specifically named company. Write two or three detailed paragraphs "
+            "(no numbered lists). Include company name, job title, period, project "
+            "purpose, responsibilities, tasks, and technologies from sources "
+            "about that company only. Do not mention other employers.",
+        ),
+        (
+            "human",
+            "**Knowledge base:**\n{context}\n\n"
+            "**Question:**\n{question}\n\n"
+            "**Answer (detailed paragraphs, no numbering):**",
         ),
     ]
 )
@@ -344,7 +390,11 @@ LIST_QUESTION_RE = re.compile(
 
 
 def is_experience_list_question(question: str) -> bool:
-    if is_single_app_role_question(question) or is_contact_question(question):
+    if (
+        is_single_app_role_question(question)
+        or is_contact_question(question)
+        or is_company_experience_question(question)
+    ):
         return False
     return bool(
         PROJECTS_QUESTION_RE.search(question)
@@ -413,7 +463,7 @@ def portfolio_num_predict(settings: Settings, question: str) -> int:
         return settings.portfolio_llm_num_predict
     if is_plural_app_role_question(question):
         return settings.portfolio_llm_num_predict
-    if is_single_app_role_question(question):
+    if is_single_app_role_question(question) or is_company_experience_question(question):
         return settings.portfolio_llm_num_predict_medium
     if FULL_LIST_QUESTION_RE.search(question) and LIST_QUESTION_RE.search(question):
         return settings.portfolio_llm_num_predict
@@ -612,12 +662,18 @@ async def augment_section_chunks(
     merged = list(chunks)
     seen = {_chunk_key(doc) for doc, _ in merged}
 
-    if is_single_app_role_question(question):
+    if is_single_app_role_question(question) or is_company_experience_question(question):
         term = extract_named_app_search_term(question)
         if term and not any(
             term.lower() in doc.page_content.lower() for doc, _ in merged
         ):
-            query = f"{term} role experience application mobile web developed"
+            if is_company_experience_question(question):
+                query = (
+                    f"{term} experience job engineer responsibilities "
+                    "technologies company project"
+                )
+            else:
+                query = f"{term} role experience application mobile web developed"
             vector_hits = await asyncio.to_thread(
                 vector_manager.search, query, fetch_k, document_id
             )
@@ -957,6 +1013,9 @@ class GenerationService:
         )
         is_contact = bool(portfolio_fast and is_contact_question(question))
         is_single_app = bool(portfolio_fast and is_single_app_role_question(question))
+        is_company_exp = bool(
+            portfolio_fast and is_company_experience_question(question)
+        )
         is_plural_app_role = bool(
             portfolio_fast and is_plural_app_role_question(question)
         )
@@ -966,7 +1025,7 @@ class GenerationService:
         if is_contact:
             merged = deduplicate_by_content_prefix(chunks)
             all_distinct = prioritize_contact_chunks(merged)[:3]
-        elif is_single_app:
+        elif is_single_app or is_company_exp:
             merged = deduplicate_by_content_prefix(chunks)
             all_distinct = prioritize_chunks_for_named_app(merged, question)[:3]
         elif is_certs_list or is_experience_list:
@@ -985,7 +1044,7 @@ class GenerationService:
                 if is_contact
                 else (
                     2500
-                    if is_single_app
+                    if is_single_app or is_company_exp
                     else (
                         900
                         if is_plural_app_role
@@ -998,7 +1057,7 @@ class GenerationService:
                 if is_contact
                 else (
                     5500
-                    if is_single_app
+                    if is_single_app or is_company_exp
                     else (8500 if is_experience_list else None)
                 )
             ),
@@ -1015,6 +1074,10 @@ class GenerationService:
             prompt = CONTACT_ARABIC_PROMPT
         elif is_contact:
             prompt = CONTACT_ENGLISH_PROMPT
+        elif is_company_exp and lang == "ar":
+            prompt = COMPANY_EXPERIENCE_ARABIC_PROMPT
+        elif is_company_exp:
+            prompt = COMPANY_EXPERIENCE_ENGLISH_PROMPT
         elif is_single_app and lang == "ar":
             prompt = SINGLE_APP_ROLE_ARABIC_PROMPT
         elif is_single_app:
@@ -1027,6 +1090,7 @@ class GenerationService:
         is_list_question = bool(
             LIST_QUESTION_RE.search(question)
             and not is_single_app_role_question(question)
+            and not is_company_experience_question(question)
             and not is_contact_question(question)
         )
         answer = strip_empty_numbered_items(
@@ -1038,7 +1102,8 @@ class GenerationService:
             ):
                 answer = await self._polish_arabic(answer, question, context)
             answer = sanitize_arabic_answer(
-                answer, light=is_list_question or is_single_app or is_contact
+                answer,
+                light=is_list_question or is_single_app or is_company_exp or is_contact,
             )
             if is_degraded_arabic_answer(answer):
                 answer = KB_NOT_FOUND_AR
