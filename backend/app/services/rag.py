@@ -8,13 +8,19 @@ from langchain_ollama import ChatOllama
 from app.config import Settings
 from app.models.schemas import SourceChunk
 from app.services.context_filter import apply_context_filters
-from app.services.hybrid_search import BM25Retriever, reciprocal_rank_fusion
+from app.services.hybrid_search import (
+    BM25Retriever,
+    _chunk_key,
+    reciprocal_rank_fusion,
+    rescore_by_query_term_overlap,
+)
 from app.services.query_expansion import QueryExpander, has_latin_tokens
 from app.services.language import (
     needs_arabic_polish,
     normalize_phone_numbers,
     resolve_language,
     sanitize_arabic_answer,
+    strip_empty_numbered_items,
 )
 from app.services.question_intent import (
     NOT_FOUND_AR,
@@ -22,7 +28,6 @@ from app.services.question_intent import (
     try_static_answer,
 )
 from app.services.reranker import Reranker
-from app.services.resume_certs import format_certifications_answer
 from app.services.vector_store import VectorStoreManager
 
 ARABIC_RAG_PROMPT = ChatPromptTemplate.from_messages(
@@ -55,14 +60,26 @@ ARABIC_RAG_PROMPT = ChatPromptTemplate.from_messages(
             "إذا كان السؤال محدداً بجهة أو موضوع معيّن.\n"
             "12. إن لم تجد المعلومة في المصادر المقدمة فقط، قل بوضوح أنها غير متوفرة "
             "ولا تخمّن.\n"
-            "13. عند ذكر الشهادات: اكتب اسم كل شهادة كاملاً بالعربية ثم التاريخ "
-            "(مثل: شهادة البنفسجي في التحقق من التصميم باستخدام يو في إم - مارس 2025). "
-            "لا تكتب التاريخ وحده.\n"
+            "13. عند السؤال عن قائمة (شهادات، مهارات، مشاريع، خبرات): اذكر كل عنصر "
+            "وارداً في المصادر ذات الصلة مع اسمه وتفاصيله وتاريخه إن وُجد؛ لا تُلخّص "
+            "في فئات عامة ولا تعتمد على المقدمة العامة إذا وُجد قسم تفصيلي في المصادر. "
+            "استخدم ترقيماً عربياً متسلسلاً فقط (١. ٢. ٣.) بنداً لكل عنصر في سطر "
+            "مستقل دون شرطات فرعية ودون مقدمة عامة.\n"
             "14. «كم بده/بكم/السعر/التكلفة» تعني التسعير والأتعاب وليس عدد المشاريع.\n"
             "15. عند استخدام قائمة مرقّمة أكمِل كل بند بجملة أو جملتين؛ "
-            "لا تبدأ بنداً دون إنهائه ولا تتوقف في منتصف كلمة أو جملة.\n"
-            "16. عند السؤال عن المهارات: اذكر المهارات البرمجية والتقنية والهندسية "
-            "من قسم المهارات في المصادر (لغات، أطر، أدوات) وليس المقدمة العامة فقط.",
+            "لا تبدأ بنداً دون إنهائه ولا تتوقف في منتصف كلمة أو جملة. "
+            "ممنوع وضع رقم بند دون نص (مثل: ١٢. أو **١٢.**). "
+            "لا تنتقل للإنجليزية ولا تنسخ المصدر حرفياً؛ أكمل القائمة حتى آخر عنصر "
+            "في المصادر.\n"
+            "16. عند السؤال عن المهارات: استخرجها من أقسام Software Skills و Hardware "
+            "Skills في المصادر (لغات، أطر، تعلم آلي، عتاد، تحكم، VFD)؛ لا تذكر "
+            "خبرات العمل أو التدريب إلا إذا سُئلت عنها صراحة. قسّم مهارات العتاد "
+            "والتحكم إلى بنود مرقّمة منفصلة (تشخيص، أنظمة الدفع، التحكم، اللوحات).\n"
+            "17. عند السؤال عن المشاريع: اذكر كل مشروع أو منتج وارداً في قسم الخبرة "
+            "(اسم المشروع/الشركة، الهدف، التقنيات) بترقيم عربي متسلسل؛ ابدأ كل بند "
+            "باسم المشروع أو الشركة كما في المصدر (مثل: ويفكس، نقيم، كوانتاليتكس، "
+            "أوليف، بلينكس، 4Tech، سي إس سي)؛ لا تخلط مع المهارات أو الشهادات أو "
+            "المقدمة العامة.\n"
         ),
         (
             "human",
@@ -86,8 +103,8 @@ ARABIC_POLISH_PROMPT = ChatPromptTemplate.from_messages(
             "3. أصلح الأسماء والمصطلحات المختلطة أو المشوّهة.\n"
             "4. حسّن البنية: جمل واضحة، وقوائم منظمة عند الحاجة.\n"
             "5. أزل الأقواس الفارغة وأي مراجع بين قوسين.\n"
-            "6. عند الشهادات: احتفظ باسم كل شهادة بالعربية مع تاريخها؛ "
-            "لا تُبقِ التاريخ دون اسم.\n"
+            "6. عند القوائم: احتفظ بكل عنصر من المسودة مع تفاصيله؛ "
+            "لا تحذف بنوداً ولا تُبقِ التاريخ دون اسم.\n"
             "7. أعد النص النهائي فقط دون مقدمات أو تعليقات.",
         ),
         (
@@ -117,7 +134,13 @@ ENGLISH_RAG_PROMPT = ChatPromptTemplate.from_messages(
             "7. If the answer is present in the sources, do not claim it is missing.\n"
             "8. Use only passages relevant to the question; do not mix unrelated sections.\n"
             "9. Only if the provided sources contain no relevant information, say: "
-            '"I cannot find an answer in the provided information."',
+            '"I cannot find an answer in the provided information."\n'
+            "10. When the question asks for a list (certifications, skills, projects, "
+            "experience), include every relevant item from the sources with names, "
+            "details, and dates when present; do not summarize from the intro alone "
+            "if a detailed section exists in the sources.\n"
+            "11. When using a numbered list, every item must include text on the same "
+            "line. Never output a bare number marker (e.g. 12. or **12.**) with no content.",
         ),
         (
             "human",
@@ -159,6 +182,284 @@ def deduplicate_chunks(
 def _paragraph_prefix(text: str, words: int = 5) -> str:
     tokens = re.findall(r"\w+", text.lower())
     return " ".join(tokens[:words])
+
+
+SKILLS_SECTION_HEADERS = (
+    "## **technical skills**",
+    "## **software skills**",
+    "## **hardware skills**",
+)
+
+SKILLS_BODY_HINTS = (
+    "ladder, classical logic",
+    "diagnosis and repair of electronic systems",
+)
+
+SKILLS_QUESTION_RE = re.compile(r"مهار|skills", re.IGNORECASE)
+PROJECTS_QUESTION_RE = re.compile(r"مشاريع|مشروع|projects", re.IGNORECASE)
+
+EXPERIENCE_SECTION_HEADERS = (
+    "## **experience**",
+    "## **●",
+    "## ●",
+)
+
+LIST_SECTION_HINTS: list[tuple[re.Pattern[str], tuple[str, ...]]] = [
+    (
+        re.compile(r"شهاد|ترخيص|certif|license", re.IGNORECASE),
+        ("licenses & certifications",),
+    ),
+    (
+        SKILLS_QUESTION_RE,
+        SKILLS_SECTION_HEADERS,
+    ),
+    (
+        PROJECTS_QUESTION_RE,
+        EXPERIENCE_SECTION_HEADERS,
+    ),
+    (
+        re.compile(r"تعليم|education", re.IGNORECASE),
+        ("education",),
+    ),
+]
+
+LIST_QUESTION_RE = re.compile(
+    r"شهاد|ترخيص|certif|license|مهار|skills|مشاريع|مشروع|projects",
+    re.IGNORECASE,
+)
+
+
+def is_skills_section_chunk(content: str) -> bool:
+    lowered = content.lower()
+    if any(header in lowered for header in SKILLS_SECTION_HEADERS):
+        return True
+    return any(hint in lowered for hint in SKILLS_BODY_HINTS)
+
+
+def _skills_chunk_rank(content: str) -> int:
+    lowered = content.lower()
+    if "## **software skills**" in lowered:
+        return 0
+    if "ladder, classical logic" in lowered:
+        return 1
+    if "## **hardware skills**" in lowered:
+        return 2
+    if "## **technical skills**" in lowered:
+        return 3
+    return 4
+
+
+def skills_chunks_complete(chunks: list[tuple[Document, float]]) -> bool:
+    has_software = any(
+        "## **software skills**" in doc.page_content.lower() for doc, _ in chunks
+    )
+    has_hardware = any(
+        "ladder, classical logic" in doc.page_content.lower()
+        or (
+            "## **hardware skills**" in doc.page_content.lower()
+            and len(doc.page_content) > 80
+        )
+        for doc, _ in chunks
+    )
+    return has_software and has_hardware
+
+
+def certs_chunks_complete(chunks: list[tuple[Document, float]]) -> bool:
+    return any(
+        "licenses & certifications" in doc.page_content.lower() for doc, _ in chunks
+    )
+
+
+def is_experience_section_chunk(content: str) -> bool:
+    lowered = content.lower()
+    if any(header in lowered for header in EXPERIENCE_SECTION_HEADERS):
+        return True
+    if "teams and projects" in lowered:
+        return True
+    if re.search(
+        r"(?:internship|full time|part time).{0,40}(?:developer|engineer)",
+        lowered,
+    ):
+        return True
+    return False
+
+
+def _experience_chunk_rank(content: str) -> tuple[int, int]:
+    lowered = content.lower()
+    if "## **experience**" in lowered:
+        return (0, -len(content))
+    if "teams and projects" in lowered:
+        return (1, -len(content))
+    if "## **●" in lowered or "## ●" in lowered:
+        return (2, -len(content))
+    return (3, -len(content))
+
+
+def experience_chunks_complete(chunks: list[tuple[Document, float]]) -> bool:
+    experience = [
+        doc for doc, _ in chunks if is_experience_section_chunk(doc.page_content)
+    ]
+    unique_snippets = {doc.page_content[:220] for doc in experience}
+    return len(unique_snippets) >= 5
+
+
+def _compact_section_chunk(content: str, max_chars: int = 800) -> str:
+    """Trim long KB chunks so list-style answers can include more distinct items."""
+    text = content.strip()
+    if len(text) <= max_chars:
+        return text
+
+    teams_match = re.search(r"teams and projects", text, re.IGNORECASE)
+    if teams_match:
+        header_lines: list[str] = []
+        for line in text.splitlines():
+            header_lines.append(line)
+            if line.strip().startswith("##"):
+                break
+        teams_text = text[teams_match.start() :]
+        next_header = re.search(r"\n##\s", teams_text[1:])
+        if next_header:
+            teams_text = teams_text[: next_header.start() + 1]
+        combined = "\n".join(header_lines) + "\n" + teams_text.strip()
+        if len(combined) <= max_chars:
+            return combined
+        return combined[:max_chars].rstrip() + "..."
+
+    kept: list[str] = []
+    for line in text.splitlines():
+        if kept and re.match(r"^[A-Za-z].*:\s*$", line.strip()):
+            break
+        if (
+            kept
+            and line.strip().startswith("- ")
+            and sum(1 for existing in kept if existing.strip().startswith("- ")) >= 1
+        ):
+            break
+        kept.append(line)
+        if len("\n".join(kept)) >= max_chars:
+            break
+
+    result = "\n".join(kept).strip()
+    if len(result) > max_chars:
+        result = result[:max_chars].rstrip() + "..."
+    elif len(result) < len(text):
+        result += "..."
+    return result
+
+
+def deduplicate_by_content_prefix(
+    chunks: list[tuple[Document, float]],
+    prefix_len: int = 220,
+) -> list[tuple[Document, float]]:
+    seen: set[str] = set()
+    unique: list[tuple[Document, float]] = []
+    for item in chunks:
+        key = item[0].page_content[:prefix_len]
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+    return unique
+
+
+async def augment_section_chunks(
+    question: str,
+    chunks: list[tuple[Document, float]],
+    *,
+    vector_manager,
+    bm25: BM25Retriever,
+    document_id: str | None,
+    fetch_k: int = 20,
+) -> list[tuple[Document, float]]:
+    """Fetch missing KB section chunks for list-style questions (domain-agnostic)."""
+    boost_specs: list[
+        tuple[re.Pattern[str], str, callable[[list[tuple[Document, float]]], bool]]
+    ] = [
+        (
+            re.compile(r"شهاد|ترخيص|certif|license", re.IGNORECASE),
+            "Licenses Certifications Purple SystemVerilog",
+            certs_chunks_complete,
+        ),
+        (
+            SKILLS_QUESTION_RE,
+            "Technical Skills Software Skills Hardware Skills Ladder VFD",
+            skills_chunks_complete,
+        ),
+        (
+            PROJECTS_QUESTION_RE,
+            "EXPERIENCE WeFix Nuqayyem Quantalytics Olive Blinx 4Tech CSC Beyond",
+            experience_chunks_complete,
+        ),
+    ]
+
+    merged = list(chunks)
+    seen = {_chunk_key(doc) for doc, _ in merged}
+
+    for pattern, query, is_complete in boost_specs:
+        if not pattern.search(question) or is_complete(merged):
+            continue
+        vector_hits = await asyncio.to_thread(
+            vector_manager.search, query, fetch_k, document_id
+        )
+        bm25_hits = await bm25.search(query, k=fetch_k, document_id=document_id)
+        for doc, score in vector_hits + bm25_hits:
+            key = _chunk_key(doc)
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append((doc, score))
+
+    return merged
+
+
+def prioritize_section_chunks(
+    chunks: list[tuple[Document, float]],
+    question: str,
+) -> list[tuple[Document, float]]:
+    """Put KB section chunks first for list-style questions (domain-agnostic)."""
+    if SKILLS_QUESTION_RE.search(question):
+        primary = [
+            item for item in chunks if is_skills_section_chunk(item[0].page_content)
+        ]
+        if primary:
+            primary.sort(key=lambda item: _skills_chunk_rank(item[0].page_content))
+            return primary
+
+    if PROJECTS_QUESTION_RE.search(question):
+        primary = [
+            item
+            for item in chunks
+            if is_experience_section_chunk(item[0].page_content)
+        ]
+        if primary:
+            primary.sort(
+                key=lambda item: _experience_chunk_rank(item[0].page_content)
+            )
+            return primary
+
+    markers: list[str] = []
+    for pattern, section_markers in LIST_SECTION_HINTS:
+        if pattern.search(question):
+            markers.extend(section_markers)
+    if not markers:
+        return chunks
+
+    primary = [
+        item
+        for item in chunks
+        if any(marker in item[0].page_content.lower() for marker in markers)
+    ]
+    if not primary:
+        return chunks
+
+    if "licenses & certifications" in markers:
+        primary.sort(
+            key=lambda item: item[0].page_content.lower().count("certification"),
+            reverse=True,
+        )
+        return primary
+
+    return primary
 
 
 def deduplicate_answer(text: str, similarity_threshold: float = 0.45) -> str:
@@ -239,7 +540,7 @@ class RetrievalService:
         )
 
         # Stage 1: multi-query expansion + hybrid retrieval + RRF fusion
-        search_queries = await self.expander.expand(query)
+        search_queries = await self.expander.expand(query, portfolio_fast=portfolio_fast)
         ranked_lists: list[list[tuple[Document, float]]] = []
 
         for search_query in search_queries:
@@ -266,6 +567,8 @@ class RetrievalService:
             candidates = reciprocal_rank_fusion(
                 ranked_lists, fetch_k, self.settings.rrf_k
             )
+
+        candidates = rescore_by_query_term_overlap(candidates, search_queries)
 
         # Stage 2: cross-encoder reranking on candidate pool
         if should_rerank and self.reranker and candidates:
@@ -298,7 +601,7 @@ class GenerationService:
             model=settings.ollama_model,
             temperature=settings.llm_temperature,
             num_predict=settings.portfolio_llm_num_predict,
-            num_ctx=1536,
+            num_ctx=4096,
         ).bind(think=False)
 
     def build_context(
@@ -306,13 +609,21 @@ class GenerationService:
         chunks: list[tuple[Document, float]],
         language: str = "en",
         portfolio_fast: bool = False,
+        *,
+        chunk_max_chars: int | None = None,
+        total_max_chars: int | None = None,
+        compact_chunks: bool = False,
     ) -> str:
         parts: list[str] = []
-        max_chars = (
+        max_chars = chunk_max_chars or (
             self.settings.portfolio_context_chunk_max_chars
             if portfolio_fast
             else self.settings.context_chunk_max_chars
         )
+        max_total = total_max_chars
+        if max_total is None and portfolio_fast:
+            max_total = self.settings.portfolio_context_max_chars
+        total_chars = 0
         for index, (doc, _) in enumerate(chunks, start=1):
             source = doc.metadata.get("filename", "unknown")
             page = doc.metadata.get("page")
@@ -326,9 +637,15 @@ class GenerationService:
                 header += f" (page {page})" if language != "ar" else f" (صفحة {page})"
 
             content = doc.page_content.strip()
-            if len(content) > max_chars:
+            if compact_chunks:
+                content = _compact_section_chunk(content, max_chars)
+            elif len(content) > max_chars:
                 content = content[:max_chars].rstrip() + "..."
-            parts.append(f"{header}\n{content}")
+            block = f"{header}\n{content}"
+            if max_total is not None and total_chars + len(block) > max_total:
+                break
+            parts.append(block)
+            total_chars += len(block)
 
         return "\n\n---\n\n".join(parts)
 
@@ -376,21 +693,34 @@ class GenerationService:
             if portfolio_fast
             else self.settings.max_context_chunks
         )
-        all_distinct = deduplicate_chunks(chunks)[:max_chunks]
-        context = self.build_context(
-            all_distinct, language=lang, portfolio_fast=portfolio_fast
+        is_projects_list = bool(
+            portfolio_fast and PROJECTS_QUESTION_RE.search(question)
         )
-
-        if lang == "ar":
-            structured = format_certifications_answer(question, all_distinct)
-            if structured:
-                return sanitize_arabic_answer(structured)
+        if is_projects_list:
+            merged = deduplicate_by_content_prefix(chunks)
+            all_distinct = prioritize_section_chunks(merged, question)[:max_chunks]
+        else:
+            all_distinct = deduplicate_chunks(chunks)[:max_chunks]
+            if portfolio_fast:
+                all_distinct = prioritize_section_chunks(all_distinct, question)
+        context = self.build_context(
+            all_distinct,
+            language=lang,
+            portfolio_fast=portfolio_fast,
+            chunk_max_chars=1100 if is_projects_list else None,
+            total_max_chars=8500 if is_projects_list else None,
+            compact_chunks=is_projects_list,
+        )
 
         llm = self.portfolio_llm if portfolio_fast else self.llm
         prompt = ARABIC_RAG_PROMPT if lang == "ar" else ENGLISH_RAG_PROMPT
         chain = prompt | llm
         response = await chain.ainvoke({"context": context, "question": question})
-        answer = deduplicate_answer(response.content)
+        raw_answer = response.content or ""
+        is_list_question = bool(LIST_QUESTION_RE.search(question))
+        answer = strip_empty_numbered_items(
+            raw_answer if is_list_question else deduplicate_answer(raw_answer)
+        )
         if lang == "ar" and answer:
             if self.settings.arabic_polish_enabled and (
                 needs_arabic_polish(answer) or is_degraded_arabic_answer(answer)
@@ -400,5 +730,5 @@ class GenerationService:
             if is_degraded_arabic_answer(answer):
                 answer = sanitize_arabic_answer(NOT_FOUND_AR)
         elif answer:
-            answer = normalize_phone_numbers(answer)
+            answer = strip_empty_numbered_items(normalize_phone_numbers(answer))
         return answer

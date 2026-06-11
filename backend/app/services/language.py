@@ -6,9 +6,21 @@ __all__ = [
     "is_arabic_question",
     "resolve_language",
     "sanitize_arabic_answer",
+    "strip_empty_numbered_items",
     "needs_arabic_polish",
     "normalize_phone_numbers",
 ]
+
+# List marker only — no body text (truncation artifact, e.g. "**12.**" or "١٢.")
+_EMPTY_NUMBERED_LINE_RE = re.compile(
+    r"^\s*"
+    r"(?:[-•]\s*)?"
+    r"(?:\*{0,2})"
+    r"(?:\d+|[\u0660-\u0669]+)"
+    r"(?:\.|\)|-|–)"
+    r"(?:\*{0,2})?"
+    r"\s*$"
+)
 
 ARABIC_RE = re.compile(
     r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]"
@@ -300,6 +312,52 @@ def needs_arabic_polish(text: str) -> bool:
     return False
 
 
+_REPETITION_RUN_RE = re.compile(r"(.{1,16}?)\1{5,}")
+
+
+def strip_repetitive_tail(text: str) -> str:
+    """Truncate answers that degenerate into repeated token loops."""
+    if not text:
+        return text
+    match = _REPETITION_RUN_RE.search(text)
+    if match:
+        text = text[: match.start()].rstrip()
+    cleaned_lines: list[str] = []
+    numbered_line = re.compile(r"^[٠-٩0-9]+[\.\)]")
+    for line in text.split("\n"):
+        if len(line) > 500 and not numbered_line.match(line.strip()):
+            line = line[:500].rsplit(" ", 1)[0] + "…"
+        cleaned_lines.append(line)
+    return "\n".join(cleaned_lines).rstrip()
+
+
+def strip_trailing_latin_block(text: str) -> str:
+    """Remove English tail paragraphs accidentally appended to Arabic answers."""
+    if not text or not ARABIC_RE.search(text):
+        return text
+    paragraphs = re.split(r"\n\n+", text.strip())
+    while paragraphs:
+        tail = paragraphs[-1].strip()
+        if not tail:
+            paragraphs.pop()
+            continue
+        latin = len(re.findall(r"[A-Za-z]", tail))
+        arabic = len(ARABIC_RE.findall(tail))
+        if latin > 60 and latin > arabic * 2:
+            paragraphs.pop()
+            continue
+        break
+    return "\n\n".join(paragraphs).strip()
+
+
+def strip_empty_numbered_items(text: str) -> str:
+    """Drop numbered list lines that contain only a marker with no content."""
+    if not text:
+        return text
+    lines = [line for line in text.split("\n") if not _EMPTY_NUMBERED_LINE_RE.match(line)]
+    return "\n".join(lines).rstrip()
+
+
 def sanitize_arabic_answer(text: str) -> str:
     """Minimal post-processing: script cleanup only, no phrase-specific rules."""
     masked, token_store = _mask_contact_tokens(text)
@@ -309,6 +367,9 @@ def sanitize_arabic_answer(text: str) -> str:
     cleaned = _replace_latin_words(cleaned)
     cleaned = _remove_empty_parentheses(cleaned)
     cleaned = _repair_orphan_conjunctions(cleaned)
+    cleaned = strip_empty_numbered_items(cleaned)
+    cleaned = strip_trailing_latin_block(cleaned)
+    cleaned = strip_repetitive_tail(cleaned)
     cleaned = _normalize_whitespace(cleaned)
     cleaned = normalize_phone_numbers(cleaned)
     return _unmask_contact_tokens(cleaned, token_store)

@@ -28,7 +28,14 @@ def resolve_language(question: str, language: str | None = None) -> str:
 
 
 def _chunk_key(doc: Document) -> str:
-    return doc.id or str(hash(doc.page_content[:100]))
+    meta = doc.metadata or {}
+    document_id = meta.get("document_id", "")
+    chunk_index = meta.get("chunk_index")
+    if chunk_index is not None:
+        return f"{document_id}:{chunk_index}"
+    if doc.id:
+        return str(doc.id)
+    return f"{document_id}:{hash(doc.page_content[:400])}"
 
 
 def reciprocal_rank_fusion(
@@ -51,6 +58,36 @@ def reciprocal_rank_fusion(
 
     fused = sorted(scores.items(), key=lambda item: item[1], reverse=True)
     return [(docs[key], score) for key, score in fused[:k]]
+
+
+def rescore_by_query_term_overlap(
+    chunks: list[tuple[Document, float]],
+    queries: list[str],
+) -> list[tuple[Document, float]]:
+    """Boost chunks whose text overlaps expanded search queries (domain-agnostic)."""
+    if not chunks or len(queries) <= 1:
+        return chunks
+
+    terms: set[str] = set()
+    for query in queries:
+        for token in re.findall(r"[A-Za-z]{3,}", query):
+            terms.add(token.lower())
+        for token in re.findall(r"[\u0600-\u06FF]{3,}", query):
+            terms.add(token)
+
+    if not terms:
+        return chunks
+
+    def overlap_score(doc: Document, base_score: float) -> tuple[int, float]:
+        content = doc.page_content.lower()
+        hits = sum(content.count(term.lower()) for term in terms)
+        return hits, base_score
+
+    return sorted(
+        chunks,
+        key=lambda item: overlap_score(item[0], item[1]),
+        reverse=True,
+    )
 
 
 def merge_hybrid_results(

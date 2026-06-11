@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     # Optional RAG-Fusion LLM expansion (adds latency; off in production Docker).
     query_expansion_enabled: bool = False
     query_expansion_timeout_seconds: float = 10.0
+    # Short LLM query variants for Arabic portfolio chat (cross-lingual retrieval).
+    portfolio_query_expansion_enabled: bool = True
+    portfolio_query_expansion_timeout_seconds: float = 8.0
     multi_query_count: int = 3
     top_k: int = 5
     retrieval_min_k: int = 10
@@ -35,10 +38,11 @@ class Settings(BaseSettings):
     rrf_k: int = 60
     reranker_min_score: float = -0.5
     context_score_margin: float = 1.5
-    portfolio_llm_num_predict: int = 512
-    portfolio_max_context_chunks: int = 4
-    portfolio_context_chunk_max_chars: int = 1800
-    portfolio_top_k: int = 5
+    portfolio_llm_num_predict: int = 1536
+    portfolio_max_context_chunks: int = 10
+    portfolio_context_chunk_max_chars: int = 2000
+    portfolio_context_max_chars: int = 5500
+    portfolio_top_k: int = 10
     portfolio_retrieval_min_k: int = 8
     portfolio_retrieval_fetch_multiplier: int = 2
     portfolio_reranker_enabled: bool = True

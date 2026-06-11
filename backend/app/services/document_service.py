@@ -11,7 +11,11 @@ from app.services.database import Chunk, Document
 from app.services.ingestion import SUPPORTED_EXTENSIONS, load_document, split_documents
 from app.services.language import resolve_language
 from app.services.hybrid_search import BM25Retriever
-from app.services.rag import GenerationService, RetrievalService
+from app.services.rag import (
+    GenerationService,
+    RetrievalService,
+    augment_section_chunks,
+)
 from app.services.reranker import get_reranker
 from app.services.vector_store import get_vector_store_manager
 
@@ -190,7 +194,14 @@ class ChatService:
             use_hybrid=use_hybrid,
             portfolio_fast=portfolio_fast,
         )
-
+        if portfolio_fast:
+            chunks = await augment_section_chunks(
+                request.question,
+                chunks,
+                vector_manager=self.vector_manager,
+                bm25=_bm25_retriever,
+                document_id=scoped_document_id,
+            )
         lang = resolve_language(request.question, request.language)
 
         if not chunks:

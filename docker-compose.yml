@@ -75,6 +75,8 @@ services:
       # Cross-lingual Arabic→English is handled by multilingual-e5 + reranker;
       # LLM query expansion adds 10–60s and breaks portfolio proxy limits.
       QUERY_EXPANSION_ENABLED: "false"
+      PORTFOLIO_QUERY_EXPANSION_ENABLED: "true"
+      PORTFOLIO_QUERY_EXPANSION_TIMEOUT_SECONDS: "8"
       TOP_K: "5"
       RETRIEVAL_MIN_K: "6"
       RETRIEVAL_FETCH_MULTIPLIER: "2"
@@ -86,13 +88,14 @@ services:
       MAX_CONTEXT_CHUNKS: "5"
       CONTEXT_CHUNK_MAX_CHARS: "2000"
       LLM_NUM_PREDICT: "512"
-      PORTFOLIO_LLM_NUM_PREDICT: "512"
-      PORTFOLIO_MAX_CONTEXT_CHUNKS: "4"
-      PORTFOLIO_CONTEXT_CHUNK_MAX_CHARS: "1800"
-      PORTFOLIO_TOP_K: "5"
-      PORTFOLIO_RETRIEVAL_MIN_K: "8"
+      PORTFOLIO_LLM_NUM_PREDICT: "1536"
+      PORTFOLIO_MAX_CONTEXT_CHUNKS: "10"
+      PORTFOLIO_CONTEXT_CHUNK_MAX_CHARS: "2000"
+      PORTFOLIO_CONTEXT_MAX_CHARS: "5500"
+      PORTFOLIO_TOP_K: "10"
+      PORTFOLIO_RETRIEVAL_MIN_K: "10"
       PORTFOLIO_RETRIEVAL_FETCH_MULTIPLIER: "2"
-      PORTFOLIO_RERANKER_ENABLED: "true"
+      PORTFOLIO_RERANKER_ENABLED: "false"
     volumes:
       - backend_data:/app/data
       - embedding_cache:/root/.cache/huggingface
