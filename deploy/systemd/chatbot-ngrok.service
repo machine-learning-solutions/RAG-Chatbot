@@ -1,18 +1,19 @@
 [Unit]
 Description=Chatbot - ngrok tunnel to gateway (port 9080)
-After=network-online.target chatbot.service
-Wants=network-online.target
-Requires=chatbot.service
+After=network-online.target docker.service chatbot.service
+Wants=network-online.target chatbot.service
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
+ExecStartPre=/home/jadaboawwad/Files/Software/Repositories/Applications/Chatbot/deploy/systemd/wait-for-gateway.sh
 ExecStart=/usr/local/bin/ngrok start chatbot
 User=jadaboawwad
 Group=jadaboawwad
 StandardOutput=journal
 StandardError=journal
 Restart=always
-RestartSec=5
+RestartSec=10
 
 [Install]
 WantedBy=multi-user.target

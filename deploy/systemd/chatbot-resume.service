@@ -1,0 +1,13 @@
+[Unit]
+Description=Chatbot recover after suspend/hibernate
+After=sleep.target suspend.target hibernate.target hybrid-sleep.target
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+ExecStart=/home/jadaboawwad/Files/Software/Repositories/Applications/Chatbot/deploy/systemd/chatbot-recover.sh
+User=jadaboawwad
+Group=jadaboawwad
+
+[Install]
+WantedBy=sleep.target suspend.target hibernate.target hybrid-sleep.target
