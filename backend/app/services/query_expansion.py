@@ -11,6 +11,7 @@ from langchain_ollama import ChatOllama
 
 from app.config import Settings
 from app.services.hybrid_search import is_arabic_question
+from app.services.question_intent import is_greeting_question
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,9 @@ CONTACT_COLLABORATION_RE = re.compile(
 )
 CONTACT_SEARCH_QUERY = (
     "Contact email phone LinkedIn jehadabuawwad@outlook.com +962 77 700 2130"
+)
+INTRO_SEARCH_QUERY = (
+    "Jehad Abu Awwad Mechatronics Engineer Full Stack Code Fellows experienced"
 )
 
 # Deterministic English retrieval queries when portfolio intent is known (no LLM).
@@ -183,6 +187,8 @@ def is_company_experience_question(question: str) -> bool:
 
 def resolve_portfolio_intent_search_query(question: str) -> str | None:
     """Return a deterministic English search query when question intent is known."""
+    if is_greeting_question(question):
+        return INTRO_SEARCH_QUERY
     if is_contact_question(question):
         return CONTACT_SEARCH_QUERY
     if is_company_experience_question(question):

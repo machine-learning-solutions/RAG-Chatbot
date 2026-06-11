@@ -206,8 +206,7 @@ class ChatService:
 
         if not chunks:
             empty_msg = (
-                "لا أستطيع العثور على إجابة في المعلومات المتوفرة. "
-                "يرجى رفع مستندات أولاً."
+                "لا أتوفّر لدي معلومة كافية للإجابة. يرجى رفع مستندات أولاً."
                 if lang == "ar"
                 else "No relevant documents found. Please upload documents first."
             )

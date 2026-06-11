@@ -7,9 +7,26 @@ __all__ = [
     "resolve_language",
     "sanitize_arabic_answer",
     "strip_empty_numbered_items",
+    "strip_meta_source_phrases",
     "needs_arabic_polish",
     "normalize_phone_numbers",
 ]
+
+_KB_META_PHRASES: tuple[str, ...] = (
+    r"بناءً على المعلومات المتوفرة(?: في قاعدة المعرفة)?(?: لدي)?",
+    r"بناءً على قاعدة المعرفة(?: المتوفرة| المتاحة)?(?: لدي)?",
+    r"من قاعدة المعرفة(?: المتوفرة| المتاحة)?",
+    r"في قاعدة المعرفة(?: المتوفرة| المتاحة)?",
+    r"قاعدة المعرفة(?: المتوفرة| المتاحة)?",
+    r"بناءً على المعلومات المتاحة(?: لدي)?",
+    r"أستند إلى المعلومات المتوفرة",
+    r"يجيب(?: عن سيرة جهاد(?: أبو عواد)?)? من قاعدة المعرفة",
+    r"يجيب عن سيرة جهاد(?: أبو عواد)? بناءً على [^.،]+",
+    r"based on the (?:provided )?knowledge base",
+    r"from the knowledge base",
+    r"in the (?:provided )?knowledge base",
+    r"the knowledge base",
+)
 
 # List marker only — no body text (truncation artifact, e.g. "**12.**" or "١٢.")
 _EMPTY_NUMBERED_LINE_RE = re.compile(
@@ -358,10 +375,24 @@ def strip_empty_numbered_items(text: str) -> str:
     return "\n".join(lines).rstrip()
 
 
+def strip_meta_source_phrases(text: str) -> str:
+    """Remove meta phrases about knowledge base / retrieved sources from answers."""
+    if not text:
+        return text
+    cleaned = text
+    for pattern in _KB_META_PHRASES:
+        cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned)
+    cleaned = re.sub(r"،\s*،+", "،", cleaned)
+    cleaned = re.sub(r"\.\s*\.+", ".", cleaned)
+    return cleaned.strip()
+
+
 def sanitize_arabic_answer(text: str, *, light: bool = False) -> str:
     """Post-process Arabic answers. Use light=True for long numbered lists."""
     if light:
-        cleaned = strip_empty_numbered_items(text)
+        cleaned = strip_meta_source_phrases(text)
+        cleaned = strip_empty_numbered_items(cleaned)
         cleaned = _normalize_whitespace(cleaned)
         return normalize_phone_numbers(cleaned)
 
@@ -375,6 +406,7 @@ def sanitize_arabic_answer(text: str, *, light: bool = False) -> str:
     cleaned = strip_empty_numbered_items(cleaned)
     cleaned = strip_trailing_latin_block(cleaned)
     cleaned = strip_repetitive_tail(cleaned)
+    cleaned = strip_meta_source_phrases(cleaned)
     cleaned = _normalize_whitespace(cleaned)
     cleaned = normalize_phone_numbers(cleaned)
     return _unmask_contact_tokens(cleaned, token_store)

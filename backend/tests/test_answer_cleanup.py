@@ -1,4 +1,4 @@
-from app.services.language import strip_empty_numbered_items
+from app.services.language import strip_empty_numbered_items, strip_meta_source_phrases
 
 
 def test_strip_trailing_empty_numbered_line():
@@ -9,6 +9,13 @@ def test_strip_trailing_empty_numbered_line():
 def test_strip_western_number_marker():
     text = "10. Done.\n11. Also done.\n12."
     assert strip_empty_numbered_items(text) == "10. Done.\n11. Also done."
+
+
+def test_strip_kb_meta_phrases():
+    text = "أهلاً بك. أنا مساعد يجيب عن سيرة جهاد بناءً على قاعدة المعرفة المتوفرة."
+    cleaned = strip_meta_source_phrases(text)
+    assert "قاعدة المعرفة" not in cleaned
+    assert "أهلاً بك" in cleaned
 
 
 def test_keeps_numbered_lines_with_content():

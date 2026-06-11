@@ -10,6 +10,7 @@ from app.services.query_expansion import (
     is_single_app_role_question,
     resolve_portfolio_intent_search_query,
 )
+from app.services.question_intent import is_greeting_question
 from app.services.rag import is_experience_list_question, portfolio_num_predict
 
 
@@ -73,6 +74,15 @@ def test_contact_phone_intent():
     q = "اريد رقم للتواصل"
     assert is_contact_question(q)
     assert "outlook" in resolve_portfolio_intent_search_query(q).lower()
+
+
+def test_greeting_intent():
+    for q in ("مرحبا", "السلام عليكم", "hello", "من انت؟"):
+        assert is_greeting_question(q)
+    assert resolve_portfolio_intent_search_query("مرحبا") == (
+        "Jehad Abu Awwad Mechatronics Engineer Full Stack Code Fellows experienced"
+    )
+    assert portfolio_num_predict(Settings(), "مرحبا") == 512
 
 
 def test_company_experience_intent():
