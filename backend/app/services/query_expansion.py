@@ -59,6 +59,22 @@ CONTACT_COLLABORATION_RE = re.compile(
     r"(?=.*(?:مشروع|project|تعاون|collaborat))",
     re.IGNORECASE | re.DOTALL,
 )
+CONTACT_USER_PROJECT_RE = re.compile(
+    r"(?:"
+    r"لدي\s+مشروع|عندي\s+مشروع|معي\s+مشروع|"
+    r"لدي\s+فكرة|عندي\s+فكرة|"
+    r"(?:أريد|اريد|ابغى|ابدي|بدي).{0,40}(?:مشروع|project|تعاون|collaborat)|"
+    r"(?:hire|hiring).{0,30}(?:jehad|project)|"
+    r"I\s+have\s+a\s+project|"
+    r"project\s+for\s+you"
+    r")",
+    re.IGNORECASE | re.DOTALL,
+)
+JEHAD_PROJECTS_ASK_RE = re.compile(
+    r"ما\s+هي\s+مشاريع|what.*projects|مشاريع\s+جهاد|"
+    r"عدد\s+المشاريع|كم\s+مشروع|مشاريعه|مشاريعه",
+    re.IGNORECASE,
+)
 CONTACT_SEARCH_QUERY = (
     "Contact email phone LinkedIn jehadabuawwad@outlook.com +962 77 700 2130"
 )
@@ -145,8 +161,17 @@ def is_single_app_role_question(question: str) -> bool:
     return extract_named_app_search_term(question) is not None
 
 
+def is_user_project_inquiry(question: str) -> bool:
+    """User offers or has a project for Jehad — respond with contact details."""
+    if JEHAD_PROJECTS_ASK_RE.search(question):
+        return False
+    return bool(CONTACT_USER_PROJECT_RE.search(question))
+
+
 def is_contact_question(question: str) -> bool:
     """Reach Jehad for hiring/collaboration or ask for contact details."""
+    if is_user_project_inquiry(question):
+        return True
     if CONTACT_INFO_RE.search(question):
         return True
     if CONTACT_COLLABORATION_RE.search(question):

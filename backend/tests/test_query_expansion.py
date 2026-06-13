@@ -77,6 +77,13 @@ def test_contact_phone_intent():
     assert "outlook" in resolve_portfolio_intent_search_query(q).lower()
 
 
+def test_user_project_contact_intent():
+    assert is_contact_question("لدي مشروع")
+    assert is_contact_question("عندي مشروع وأريد جهاد يشتغل عليه")
+    assert not is_contact_question("ما هي مشاريع جهاد؟")
+    assert "outlook" in resolve_portfolio_intent_search_query("لدي مشروع").lower()
+
+
 def test_greeting_intent():
     for q in ("مرحبا", "السلام عليكم", "hello", "من انت؟"):
         assert is_greeting_question(q)
