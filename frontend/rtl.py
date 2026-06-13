@@ -13,6 +13,16 @@ def contains_arabic(text: str) -> bool:
 NUM_ONLY_LINE = re.compile(r"^([٠-٩]+|\d+)\.\s*$")
 NUM_HEADING_LINE = re.compile(r"^([٠-٩]+|\d+)\.\s*(.+)$")
 ARABIC_LIST_SPLIT = re.compile(r"(?=^(?:[٠-٩]+|\d+)\.)", re.MULTILINE)
+INLINE_AR_NUM = re.compile(r"(?<=[^\n])\s+([٠-٩]{1,2})\.\s+")
+INLINE_EN_NUM = re.compile(r"(?<=[^\n])\s+(\d{1,2})\.\s+")
+
+
+def split_inline_numbered_items(text: str) -> str:
+    if not text:
+        return text
+    if contains_arabic(text):
+        return INLINE_AR_NUM.sub(r"\n\1. ", text)
+    return INLINE_EN_NUM.sub(r"\n\1. ", text)
 
 
 def merge_orphan_list_numbers(text: str) -> str:
@@ -51,7 +61,9 @@ def format_text_breaks(text: str) -> str:
 
 
 def prepare_arabic_text(text: str) -> str:
-    return merge_orphan_list_numbers(format_text_breaks(text))
+    return merge_orphan_list_numbers(
+        format_text_breaks(split_inline_numbered_items(text))
+    )
 
 
 # Phone numbers, emails, and URLs must stay LTR inside Arabic paragraphs.
@@ -109,17 +121,22 @@ def _render_arabic_numbered_list_html(text: str) -> str:
         heading_match = NUM_HEADING_LINE.match(lines[0].strip())
         if not heading_match:
             continue
+        num = heading_match.group(1)
         title = heading_match.group(2).strip()
         body = "\n".join(lines[1:]).strip()
         title_html = wrap_ltr_isolates(title)
         if body:
             body_html = wrap_ltr_isolates(body).replace("\n", "<br>")
             items.append(
-                f'<li><span class="ar-list-title">{title_html}</span>'
+                f'<li><span class="ar-list-num"><strong>{html.escape(num)}.</strong></span> '
+                f'<span class="ar-list-title">{title_html}</span>'
                 f'<div class="ar-list-body">{body_html}</div></li>'
             )
         else:
-            items.append(f'<li><span class="ar-list-title">{title_html}</span></li>')
+            items.append(
+                f'<li><span class="ar-list-num"><strong>{html.escape(num)}.</strong></span> '
+                f'<span class="ar-list-title">{title_html}</span></li>'
+            )
 
     if items:
         parts.append('<ol dir="rtl" class="ar-num-list">')
@@ -202,8 +219,7 @@ BIDI_CSS = """
 ol.ar-num-list {
     direction: rtl !important;
     text-align: right !important;
-    list-style-type: arabic-indic;
-    list-style-position: inside;
+    list-style: none;
     padding: 0 0.25rem 0 0 !important;
     margin: 0.5rem 0 0.75rem !important;
 }
@@ -213,6 +229,12 @@ ol.ar-num-list li {
     text-align: right !important;
     unicode-bidi: embed !important;
     margin-bottom: 0.85rem;
+    display: block;
+}
+
+.ar-list-num {
+    font-weight: 700;
+    margin-left: 0.35rem;
 }
 
 .ar-list-title {

@@ -1,4 +1,8 @@
-from app.services.language import strip_empty_numbered_items, strip_meta_source_phrases
+from app.services.language import (
+    split_inline_numbered_items,
+    strip_empty_numbered_items,
+    strip_meta_source_phrases,
+)
 
 
 def test_strip_trailing_empty_numbered_line():
@@ -16,6 +20,14 @@ def test_strip_kb_meta_phrases():
     cleaned = strip_meta_source_phrases(text)
     assert "قاعدة المعرفة" not in cleaned
     assert "أهلاً بك" in cleaned
+
+
+def test_split_inline_numbered_items():
+    text = "١. المسمى الوظيفي: مهندس ٢. الخبرات العامة: صيانة ٣. المهارات"
+    result = split_inline_numbered_items(text)
+    assert result.startswith("١. المسمى")
+    assert "\n٢. الخبرات" in result
+    assert "\n٣. المهارات" in result
 
 
 def test_keeps_numbered_lines_with_content():

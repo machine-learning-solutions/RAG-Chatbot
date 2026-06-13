@@ -6,6 +6,7 @@ __all__ = [
     "is_arabic_question",
     "resolve_language",
     "sanitize_arabic_answer",
+    "split_inline_numbered_items",
     "strip_empty_numbered_items",
     "strip_meta_source_phrases",
     "needs_arabic_polish",
@@ -42,6 +43,8 @@ _EMPTY_NUMBERED_LINE_RE = re.compile(
 ARABIC_RE = re.compile(
     r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]"
 )
+_INLINE_AR_NUM_RE = re.compile(r"(?<=[^\n])\s+([٠-٩]{1,2})\.\s+")
+_INLINE_EN_NUM_RE = re.compile(r"(?<=[^\n])\s+(\d{1,2})\.\s+")
 LATIN_WORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9.\-/&]*")
 ALLOWED_LATIN_ACRONYMS = frozenset(
     {"AI", "ML", "EMG", "API", "UI", "UX", "IOT", "IOV", "RAG", "SQL", "PDF"}
@@ -367,6 +370,15 @@ def strip_trailing_latin_block(text: str) -> str:
     return "\n\n".join(paragraphs).strip()
 
 
+def split_inline_numbered_items(text: str) -> str:
+    """Put each ١. / 1. list marker on its own line when the model runs them together."""
+    if not text:
+        return text
+    if ARABIC_RE.search(text):
+        return _INLINE_AR_NUM_RE.sub(r"\n\1. ", text)
+    return _INLINE_EN_NUM_RE.sub(r"\n\1. ", text)
+
+
 def strip_empty_numbered_items(text: str) -> str:
     """Drop numbered list lines that contain only a marker with no content."""
     if not text:
@@ -390,6 +402,7 @@ def strip_meta_source_phrases(text: str) -> str:
 
 def sanitize_arabic_answer(text: str, *, light: bool = False) -> str:
     """Post-process Arabic answers. Use light=True for long numbered lists."""
+    text = split_inline_numbered_items(text)
     if light:
         cleaned = strip_meta_source_phrases(text)
         cleaned = strip_empty_numbered_items(cleaned)
