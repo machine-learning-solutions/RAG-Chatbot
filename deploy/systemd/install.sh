@@ -33,11 +33,6 @@ echo "==> Installing sleep hook (post-wake recover)..."
 mkdir -p /etc/systemd/system-sleep
 install -m 755 "$SCRIPT_DIR/chatbot-resume.sh" /etc/systemd/system-sleep/chatbot-resume
 
-echo "==> Installing no-suspend policy (lid close / idle)..."
-mkdir -p /etc/systemd/logind.d
-cp "$SCRIPT_DIR/99-chatbot-no-suspend.conf" /etc/systemd/logind.d/99-chatbot-no-suspend.conf
-systemctl restart systemd-logind.service 2>/dev/null || true
-
 systemctl --user stop chatbot-ngrok.service 2>/dev/null || true
 systemctl --user disable chatbot-ngrok.service 2>/dev/null || true
 
@@ -52,7 +47,10 @@ systemctl enable chatbot-watchdog.timer
 echo "==> Starting stack + watchdog..."
 systemctl start chatbot-watchdog.timer
 RUN_USER="${SUDO_USER:-jadaboawwad}"
-sudo -u "$RUN_USER" -H bash "$RECOVER"
+RUN_HOME="$(getent passwd "$RUN_USER" | cut -d: -f6)"
+# Do not stop ngrok here — recover restarts it if needed.
+su - "$RUN_USER" -c "env HOME='$RUN_HOME' USER='$RUN_USER' bash '$RECOVER'" || true
+systemctl start chatbot-ngrok.service 2>/dev/null || true
 
 echo ""
 echo "Done. Status:"
@@ -70,8 +68,15 @@ for t in d.get('tunnels', []):
 " 2>/dev/null || echo "  (check http://localhost:4040)"
 
 echo ""
-echo "Watchdog runs every 90s — auto-fixes offline ngrok after suspend."
+echo "==> Enabling host mode (chatbot stays online; system suspend blocked)..."
+chmod +x "$SCRIPT_DIR/enable-host-mode.sh" "$SCRIPT_DIR/disable-host-mode.sh"
+bash "$SCRIPT_DIR/enable-host-mode.sh" || true
+systemctl start chatbot-host-mode.service 2>/dev/null || true
+
+echo ""
+echo "Watchdog: every 90s fixes ngrok if it drops."
 echo "Manual recover: bash $RECOVER"
+echo "Allow Suspend again: sudo bash $SCRIPT_DIR/disable-host-mode.sh"
 echo ""
 if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ]; then
   echo "Skipping monitor alerts (run as your user: bash $SCRIPT_DIR/../monitor/install.sh)"

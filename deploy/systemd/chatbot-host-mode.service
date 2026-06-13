@@ -1,0 +1,14 @@
+[Unit]
+Description=Keep chatbot online — block OS suspend (screen lock/blank still allowed)
+After=network-online.target chatbot.service
+Wants=chatbot.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/systemd-inhibit --what=sleep --who=chatbot-host --why=portfolio-chatbot-host --mode=block sleep infinity
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

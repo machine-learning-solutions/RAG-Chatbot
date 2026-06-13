@@ -10,7 +10,12 @@ mkdir -p "$LOCK_DIR"
 
 log() { logger -t chatbot-recover "$*"; }
 
-run_recover() {
+(
+  flock -n 9 || {
+    log "Recover already running; skip"
+    exit 0
+  }
+
   cd "$ROOT"
 
   backend_ok() {
@@ -73,12 +78,10 @@ run_recover() {
 
   restart_ngrok() {
     log "Restarting ngrok tunnel"
-    systemctl stop chatbot-ngrok.service 2>/dev/null || true
-    pkill -f "ngrok start chatbot" 2>/dev/null || true
-    sleep 2
     systemctl reset-failed chatbot-ngrok.service 2>/dev/null || true
-    systemctl start chatbot-ngrok.service
-    for _ in $(seq 1 30); do
+    systemctl restart chatbot-ngrok.service 2>/dev/null \
+      || systemctl start chatbot-ngrok.service
+    for _ in $(seq 1 45); do
       ngrok_ok && return 0
       sleep 2
     done
@@ -90,13 +93,12 @@ run_recover() {
   wait_for_network
   wait_for_docker
   ensure_stack
-  restart_ngrok
+
+  if ngrok_ok; then
+    log "ngrok already healthy"
+  else
+    restart_ngrok || true
+  fi
+
   log "Recover finished (backend=$(backend_ok && echo ok || echo fail) ngrok=$(ngrok_ok && echo ok || echo fail))"
-}
-
-if flock -n "$LOCK_FILE" bash -c "$(declare -f log run_recover); run_recover"; then
-  exit 0
-fi
-
-log "Recover already running; skip"
-exit 0
+) 9>"$LOCK_FILE"
