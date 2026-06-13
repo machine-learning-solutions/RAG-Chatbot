@@ -36,7 +36,11 @@ from app.services.language import (
     strip_empty_numbered_items,
     strip_meta_source_phrases,
 )
-from app.services.question_intent import is_degraded_arabic_answer, is_greeting_question
+from app.services.question_intent import (
+    is_degraded_arabic_answer,
+    is_general_info_question,
+    is_greeting_question,
+)
 from app.services.reranker import Reranker
 from app.services.vector_store import VectorStoreManager
 
@@ -90,6 +94,7 @@ ARABIC_RAG_PROMPT = ChatPromptTemplate.from_messages(
             "14. «كم بده/بكم/السعر/التكلفة» تعني التسعير والأتعاب وليس عدد المشاريع.\n"
             "15. عند استخدام قائمة مرقّمة أكمِل كل بند بجملة أو جملتين؛ "
             "لا تبدأ بنداً دون إنهائه ولا تتوقف في منتصف كلمة أو جملة. "
+            "لا تبدأ رقماً جديداً (مثل ١١.) إلا إذا أكملت البند السابق بالكامل. "
             "ممنوع وضع رقم بند دون نص (مثل: ١٢. أو **١٢.**). "
             "لا تنتقل للإنجليزية ولا تنسخ المصدر حرفياً؛ أكمل القائمة حتى آخر عنصر "
             "في المصادر.\n"
@@ -546,18 +551,22 @@ FULL_LIST_QUESTION_RE = re.compile(
 
 
 def portfolio_num_predict(settings: Settings, question: str) -> int:
-    """High token budget only for exhaustive list answers (certs, «list all»)."""
-    if CERT_INTENT_RE.search(question):
-        return settings.portfolio_llm_num_predict
-    if is_plural_app_role_question(question):
-        return settings.portfolio_llm_num_predict
-    if is_single_app_role_question(question) or is_company_experience_question(question):
-        return settings.portfolio_llm_num_predict_medium
+    """Token budget for portfolio answers — lists and intros need the full tier."""
     if is_greeting_question(question):
         return settings.portfolio_llm_num_predict_short
-    if FULL_LIST_QUESTION_RE.search(question) and LIST_QUESTION_RE.search(question):
+    if (
+        CERT_INTENT_RE.search(question)
+        or is_plural_app_role_question(question)
+        or is_general_info_question(question)
+        or is_experience_list_question(question)
+        or LIST_QUESTION_RE.search(question)
+        or (
+            FULL_LIST_QUESTION_RE.search(question)
+            and LIST_QUESTION_RE.search(question)
+        )
+    ):
         return settings.portfolio_llm_num_predict
-    if is_experience_list_question(question) or LIST_QUESTION_RE.search(question):
+    if is_single_app_role_question(question) or is_company_experience_question(question):
         return settings.portfolio_llm_num_predict_medium
     return settings.portfolio_llm_num_predict_short
 

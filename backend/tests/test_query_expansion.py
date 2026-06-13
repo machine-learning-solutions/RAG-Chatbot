@@ -10,7 +10,7 @@ from app.services.query_expansion import (
     is_single_app_role_question,
     resolve_portfolio_intent_search_query,
 )
-from app.services.question_intent import is_greeting_question
+from app.services.question_intent import is_greeting_question, is_general_info_question
 from app.services.rag import is_experience_list_question, portfolio_num_predict
 
 
@@ -38,8 +38,9 @@ def test_portfolio_expand_caps_to_two_queries():
 
 def test_portfolio_num_predict_tiers():
     settings = Settings()
-    assert portfolio_num_predict(settings, "اسرد جميع شهادات جهاد") == 1536
-    assert portfolio_num_predict(settings, "ما هي مهارات جهاد؟") == 1024
+    assert portfolio_num_predict(settings, "اسرد جميع شهادات جهاد") == 2048
+    assert portfolio_num_predict(settings, "ما هي مهارات جهاد؟") == 2048
+    assert portfolio_num_predict(settings, "اعطني شوية معلومات عن جهاد") == 2048
     assert portfolio_num_predict(settings, "ما رقم هاتفه؟") == 512
 
 
@@ -49,7 +50,7 @@ def test_plural_app_role_intent():
     assert not is_single_app_role_question(q)
     assert is_experience_list_question(q)
     assert resolve_portfolio_intent_search_query(q) is not None
-    assert portfolio_num_predict(Settings(), q) == 1536
+    assert portfolio_num_predict(Settings(), q) == 2048
 
 
 def test_single_app_role_intent():
@@ -79,10 +80,13 @@ def test_contact_phone_intent():
 def test_greeting_intent():
     for q in ("مرحبا", "السلام عليكم", "hello", "من انت؟"):
         assert is_greeting_question(q)
+    assert not is_greeting_question("اعطني شوية معلومات عن جهاد")
+    assert is_general_info_question("اعطني شوية معلومات عن جهاد")
     assert resolve_portfolio_intent_search_query("مرحبا") == (
         "Jehad Abu Awwad Mechatronics Engineer Full Stack Code Fellows experienced"
     )
     assert portfolio_num_predict(Settings(), "مرحبا") == 512
+    assert portfolio_num_predict(Settings(), "اعطني شوية معلومات عن جهاد") == 2048
 
 
 def test_company_experience_intent():

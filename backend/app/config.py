@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     rrf_k: int = 60
     reranker_min_score: float = -0.5
     context_score_margin: float = 1.5
-    portfolio_llm_num_predict: int = 1536
+    portfolio_llm_num_predict: int = 2048
     portfolio_llm_num_predict_medium: int = 1024
     portfolio_llm_num_predict_short: int = 512
     portfolio_max_context_chunks: int = 10
